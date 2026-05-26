@@ -81,7 +81,10 @@ class Config:
             min_daily_volume_rub=float(os.getenv("MIN_DAILY_VOLUME_RUB", "5000000")),
             poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "300")),
             rebalance_interval_sec=int(
-                os.getenv("REBALANCE_INTERVAL_SEC", str(7 * 24 * 3600))
+                os.getenv(
+                    "REBALANCE_INTERVAL_SEC",
+                    str(30 * 24 * 3600),
+                )
             ),
             market_index=os.getenv("MARKET_INDEX", "IMOEX").upper(),
             satellite_min_rvol=float(os.getenv("SATELLITE_MIN_RVOL", "1.5")),

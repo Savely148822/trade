@@ -35,6 +35,7 @@ class PortfolioState:
     peak_equity: float
     equity_at_last_rebalance: float
     last_rebalance_at: str
+    last_scheduled_rebalance_at: str
     satellite_month_start_equity: float
     satellite_baseline_equity: float
     month_key: str
@@ -60,6 +61,7 @@ def load_state(initial_rub: float, core_weight: float) -> PortfolioState:
         peak_equity=initial_rub,
         equity_at_last_rebalance=initial_rub,
         last_rebalance_at=now,
+        last_scheduled_rebalance_at=now,
         satellite_month_start_equity=sat_cash,
         satellite_baseline_equity=sat_cash,
         month_key=month,
@@ -92,6 +94,7 @@ def _to_dict(state: PortfolioState) -> dict:
         "peak_equity": state.peak_equity,
         "equity_at_last_rebalance": state.equity_at_last_rebalance,
         "last_rebalance_at": state.last_rebalance_at,
+        "last_scheduled_rebalance_at": state.last_scheduled_rebalance_at,
         "satellite_month_start_equity": state.satellite_month_start_equity,
         "satellite_baseline_equity": state.satellite_baseline_equity,
         "month_key": state.month_key,
@@ -119,6 +122,9 @@ def _from_dict(raw: dict, fallback_initial: float, core_weight: float) -> Portfo
             raw.get("equity_at_last_rebalance", initial)
         ),
         last_rebalance_at=str(raw.get("last_rebalance_at", now)),
+        last_scheduled_rebalance_at=str(
+            raw.get("last_scheduled_rebalance_at", raw.get("last_rebalance_at", now))
+        ),
         satellite_month_start_equity=float(
             raw.get(
                 "satellite_month_start_equity",

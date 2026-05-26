@@ -8,8 +8,9 @@ from bot.data.moex_iss import fetch_daily_closes, fetch_daily_ohlc, fetch_last_p
 from bot.portfolio.executor import apply_core_signal, apply_satellite_signal
 from bot.portfolio.rebalancer import (
     rebalance_portfolio,
-    should_rebalance,
+    rebalance_satellite_profit_trim,
     should_rebalance_satellite_profit,
+    should_rebalance_scheduled,
 )
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
@@ -49,28 +50,26 @@ def run_cycle(config: Config) -> None:
         prices,
         config.satellite_profit_rebalance_pct,
     )
-    scheduled = should_rebalance(state, config.rebalance_interval_sec)
+    scheduled = should_rebalance_scheduled(state, config.rebalance_interval_sec)
 
-    if profit_hit or scheduled:
-        if profit_hit:
-            logger.info("--- Profit rebalance: %s ---", profit_reason)
-            rebalance_portfolio(
-                state,
-                prices,
-                config.core_weight,
-                config.satellite_weight,
-                full_liquidate=True,
-                trigger="satellite_profit",
-            )
-        else:
-            logger.info("--- Scheduled rebalance (80/20 from total equity) ---")
-            rebalance_portfolio(
-                state,
-                prices,
-                config.core_weight,
-                config.satellite_weight,
-                trigger="scheduled",
-            )
+    if profit_hit:
+        logger.info("--- Satellite profit trim: %s ---", profit_reason)
+        rebalance_satellite_profit_trim(
+            state,
+            prices,
+            config.satellite_weight,
+        )
+        prices = _collect_prices(all_tickers)
+
+    if scheduled:
+        logger.info("--- Monthly rebalance (80/20 from total equity) ---")
+        rebalance_portfolio(
+            state,
+            prices,
+            config.core_weight,
+            config.satellite_weight,
+            trigger="scheduled_monthly",
+        )
         prices = _collect_prices(all_tickers)
 
     risk = check_risk(

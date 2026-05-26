@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 TOLERANCE_PCT = 1.5
 
+# 30 суток — плановый ребаланс раз в месяц
+MONTHLY_REBALANCE_SEC = 30 * 24 * 3600
+
 
 @dataclass
 class RebalanceReport:
@@ -28,16 +31,17 @@ class RebalanceReport:
     target_satellite: float
     cash_moved_to_core: float
     satellite_sold_rub: float
-    full_liquidate: bool
+    core_sold_rub: float
     trigger: str
     message: str
 
 
-def should_rebalance(state: PortfolioState, interval_sec: int) -> bool:
-    if not state.last_rebalance_at:
+def should_rebalance_scheduled(state: PortfolioState, interval_sec: int) -> bool:
+    last_at = state.last_scheduled_rebalance_at or state.last_rebalance_at
+    if not last_at:
         return True
     try:
-        last = datetime.fromisoformat(state.last_rebalance_at)
+        last = datetime.fromisoformat(last_at)
     except ValueError:
         return True
     if last.tzinfo is None:
@@ -51,7 +55,6 @@ def should_rebalance_satellite_profit(
     prices: dict[str, float],
     profit_pct: float,
 ) -> tuple[bool, str]:
-    """True, если satellite вырос на profit_pct% от базы после прошлого ребаланса."""
     if profit_pct <= 0:
         return False, ""
     baseline = state.satellite_baseline_equity
@@ -68,35 +71,102 @@ def should_rebalance_satellite_profit(
     return False, ""
 
 
-def _liquidate_sleeve(sleeve: SleeveState, sleeve_name: str, prices: dict[str, float]) -> float:
-    sold_rub = 0.0
-    for ticker in list(sleeve.positions.keys()):
+def _reduce_sleeve_positions(
+    sleeve: SleeveState,
+    sleeve_name: str,
+    prices: dict[str, float],
+    rub_target: float,
+) -> float:
+    sold = 0.0
+    for ticker in sorted(
+        sleeve.positions.keys(),
+        key=lambda t: sleeve.positions[t].qty * prices.get(t, 0),
+        reverse=True,
+    ):
+        if sold >= rub_target:
+            break
         px = prices.get(ticker)
         if not px:
             continue
-        result = _sell(sleeve, sleeve_name, ticker, px, 1.0)
+        pos = sleeve.positions[ticker]
+        value = pos.qty * px
+        need = rub_target - sold
+        fraction = min(1.0, need / value) if value > 0 else 1.0
+        result = _sell(sleeve, sleeve_name, ticker, px, fraction)
         if result:
-            sold_rub += result.rub
-    return sold_rub
+            sold += result.rub
+    return sold
 
 
-def _full_liquidate_and_split(
+def rebalance_satellite_profit_trim(
     state: PortfolioState,
     prices: dict[str, float],
-    core_weight: float,
     satellite_weight: float,
-) -> float:
-    """Весь портфель в кэш, затем деление 80/20."""
-    sold = 0.0
-    sold += _liquidate_sleeve(state.core, "core", prices)
-    sold += _liquidate_sleeve(state.satellite, "satellite", prices)
+) -> RebalanceReport:
+    """Сливки с satellite до целевых 20% от total. Core-позиции не трогаем."""
+    total = state.total_equity(prices)
+    core_before = state.core.equity(prices)
+    sat_before = state.satellite.equity(prices)
+    target_sat = total * satellite_weight
+    target_core = total * (1 - satellite_weight)
 
-    total_cash = state.core.cash_rub + state.satellite.cash_rub
-    state.core.positions.clear()
-    state.satellite.positions.clear()
-    state.core.cash_rub = total_cash * core_weight
-    state.satellite.cash_rub = total_cash * satellite_weight
-    return sold
+    cash_moved_to_core = 0.0
+    satellite_sold_rub = 0.0
+
+    logger.info(
+        "REBALANCE [satellite_profit_trim] | total=%.0f | sat %.0f → target %.0f (%.0f%%)",
+        total,
+        sat_before,
+        target_sat,
+        satellite_weight * 100,
+    )
+
+    sat_eq = sat_before
+    if sat_eq > target_sat * (1 + TOLERANCE_PCT / 100):
+        excess = sat_eq - target_sat
+        logger.info("  Trim satellite excess: %.0f RUB (positions stay in market)", excess)
+        satellite_sold_rub = _reduce_sleeve_positions(
+            state.satellite, "satellite", prices, excess
+        )
+        sat_eq = state.satellite.equity(prices)
+
+    if sat_eq > target_sat and state.satellite.cash_rub > 0:
+        transfer = min(sat_eq - target_sat, state.satellite.cash_rub)
+        state.satellite.cash_rub -= transfer
+        state.core.cash_rub += transfer
+        cash_moved_to_core += transfer
+        logger.info("  Cash to core: +%.0f RUB", transfer)
+
+    sat_after = state.satellite.equity(prices)
+    state.satellite_baseline_equity = sat_after
+
+    core_after = state.core.equity(prices)
+    msg = (
+        f"Sat trim: {sat_before:.0f} → {sat_after:.0f} RUB "
+        f"({sat_after/total*100:.1f}% of total), core untouched in stocks"
+        if total
+        else "empty"
+    )
+    logger.info("  %s", msg)
+    logger.info("  New satellite baseline: %.0f RUB", state.satellite_baseline_equity)
+
+    return RebalanceReport(
+        total_equity=total,
+        equity_at_last_rebalance=state.equity_at_last_rebalance,
+        pnl_rub=0.0,
+        pnl_pct=0.0,
+        core_equity_before=core_before,
+        satellite_equity_before=sat_before,
+        core_equity_after=core_after,
+        satellite_equity_after=sat_after,
+        target_core=target_core,
+        target_satellite=target_sat,
+        cash_moved_to_core=cash_moved_to_core,
+        satellite_sold_rub=satellite_sold_rub,
+        core_sold_rub=0.0,
+        trigger="satellite_profit_trim",
+        message=msg,
+    )
 
 
 def rebalance_portfolio(
@@ -105,9 +175,9 @@ def rebalance_portfolio(
     core_weight: float,
     satellite_weight: float,
     *,
-    full_liquidate: bool = False,
-    trigger: str = "scheduled",
+    trigger: str = "scheduled_monthly",
 ) -> RebalanceReport:
+    """Плановый ребаланс 80/20: мягкая подгонка обоих рукавов, без полной ликвидации."""
     total = state.total_equity(prices)
     equity_at_last = state.equity_at_last_rebalance or state.initial_equity
     pnl_rub = total - equity_at_last
@@ -120,11 +190,11 @@ def rebalance_portfolio(
 
     cash_moved_to_core = 0.0
     satellite_sold_rub = 0.0
+    core_sold_rub = 0.0
 
     logger.info(
-        "REBALANCE [%s]%s | total=%.0f RUB | PnL since last: %+.0f RUB (%+.2f%%)",
+        "REBALANCE [%s] | total=%.0f RUB | PnL since last: %+.0f RUB (%+.2f%%)",
         trigger,
-        " | FULL RESET" if full_liquidate else "",
         total,
         pnl_rub,
         pnl_pct,
@@ -144,43 +214,49 @@ def rebalance_portfolio(
         satellite_weight * 100,
     )
 
-    if full_liquidate:
-        satellite_sold_rub = _full_liquidate_and_split(
-            state, prices, core_weight, satellite_weight
+    # Satellite перевес — сливки в core
+    sat_eq = sat_before
+    if total > 0 and sat_eq > target_sat * (1 + TOLERANCE_PCT / 100):
+        excess = sat_eq - target_sat
+        satellite_sold_rub = _reduce_sleeve_positions(
+            state.satellite, "satellite", prices, excess
         )
-        logger.info(
-            "  Full liquidate: sold ~%.0f RUB, all cash split %.0f/%.0f",
-            satellite_sold_rub,
-            core_weight * 100,
-            satellite_weight * 100,
-        )
-    else:
         sat_eq = state.satellite.equity(prices)
-        if total > 0 and sat_eq > target_sat * (1 + TOLERANCE_PCT / 100):
-            excess = sat_eq - target_sat
-            satellite_sold_rub = _reduce_satellite_positions(state, prices, excess)
-            sat_eq = state.satellite.equity(prices)
 
-        if sat_eq > target_sat and state.satellite.cash_rub > 0:
-            transfer = min(sat_eq - target_sat, state.satellite.cash_rub)
-            state.satellite.cash_rub -= transfer
-            state.core.cash_rub += transfer
-            cash_moved_to_core += transfer
+    if sat_eq > target_sat and state.satellite.cash_rub > 0:
+        transfer = min(sat_eq - target_sat, state.satellite.cash_rub)
+        state.satellite.cash_rub -= transfer
+        state.core.cash_rub += transfer
+        cash_moved_to_core += transfer
 
-        sat_eq = state.satellite.equity(prices)
-        if sat_eq < target_sat * (1 - TOLERANCE_PCT / 100):
-            need = target_sat - sat_eq
-            transfer = min(need, state.core.cash_rub)
-            if transfer > 0:
-                state.core.cash_rub -= transfer
-                state.satellite.cash_rub += transfer
-                cash_moved_to_core -= transfer
+    # Core перевес — сливки в satellite (кэш)
+    core_eq = state.core.equity(prices)
+    if total > 0 and core_eq > target_core * (1 + TOLERANCE_PCT / 100):
+        excess = core_eq - target_core
+        core_sold_rub = _reduce_sleeve_positions(state.core, "core", prices, excess)
+        transfer = min(excess, state.core.cash_rub)
+        if transfer > 0:
+            state.core.cash_rub -= transfer
+            state.satellite.cash_rub += transfer
+            cash_moved_to_core -= transfer
+
+    # Satellite недовес — кэш из core
+    sat_eq = state.satellite.equity(prices)
+    if sat_eq < target_sat * (1 - TOLERANCE_PCT / 100):
+        need = target_sat - sat_eq
+        transfer = min(need, state.core.cash_rub)
+        if transfer > 0:
+            state.core.cash_rub -= transfer
+            state.satellite.cash_rub += transfer
+            cash_moved_to_core -= transfer
 
     core_after = state.core.equity(prices)
     sat_after = state.satellite.equity(prices)
 
-    state.equity_at_last_rebalance = state.total_equity(prices)
-    state.last_rebalance_at = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+    state.equity_at_last_rebalance = total
+    state.last_scheduled_rebalance_at = now
+    state.last_rebalance_at = now
     state.satellite_baseline_equity = sat_after
     state.satellite_month_start_equity = sat_after
 
@@ -191,10 +267,6 @@ def rebalance_portfolio(
         else "empty portfolio"
     )
     logger.info("  %s", msg)
-    logger.info(
-        "  New satellite baseline for profit target: %.0f RUB",
-        state.satellite_baseline_equity,
-    )
 
     return RebalanceReport(
         total_equity=total,
@@ -209,37 +281,7 @@ def rebalance_portfolio(
         target_satellite=target_sat,
         cash_moved_to_core=cash_moved_to_core,
         satellite_sold_rub=satellite_sold_rub,
-        full_liquidate=full_liquidate,
+        core_sold_rub=core_sold_rub,
         trigger=trigger,
         message=msg,
     )
-
-
-def _reduce_satellite_positions(
-    state: PortfolioState,
-    prices: dict[str, float],
-    rub_target: float,
-) -> float:
-    sold = 0.0
-    for ticker in sorted(
-        state.satellite.positions.keys(),
-        key=lambda t: state.satellite.positions[t].qty * prices.get(t, 0),
-        reverse=True,
-    ):
-        if sold >= rub_target:
-            break
-        px = prices.get(ticker)
-        if not px:
-            continue
-        pos = state.satellite.positions[ticker]
-        value = pos.qty * px
-        need = rub_target - sold
-        fraction = min(1.0, need / value) if value > 0 else 1.0
-        result = _sell(state.satellite, "satellite", ticker, px, fraction)
-        if result:
-            sold += result.rub
-    if sold > 0:
-        transfer = min(sold, state.satellite.cash_rub)
-        state.satellite.cash_rub -= transfer
-        state.core.cash_rub += transfer
-    return sold
