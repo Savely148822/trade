@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from bot.universe import DEFAULT_CORE_UNIVERSE, DEFAULT_SATELLITE_UNIVERSE
+
 load_dotenv()
 
 
@@ -66,11 +68,11 @@ class Config:
             core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
             core_universe=_list(
                 os.getenv("CORE_UNIVERSE"),
-                "SBMX,TMOS,TRUR,SBGB,LQDT,SBER,LKOH,GAZP",
+                ",".join(DEFAULT_CORE_UNIVERSE),
             ),
             satellite_universe=_list(
                 os.getenv("SATELLITE_UNIVERSE"),
-                "VTBR,AFKS,MTSS",
+                ",".join(DEFAULT_SATELLITE_UNIVERSE),
             ),
             satellite_breakout_bars=int(os.getenv("SATELLITE_BREAKOUT_BARS", "20")),
             satellite_atr_period=int(os.getenv("SATELLITE_ATR_PERIOD", "14")),

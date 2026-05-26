@@ -14,6 +14,16 @@ cp .env.example .env
 python -m bot
 ```
 
+## Бэктест (данные прошлого года, MOEX ISS)
+
+Симуляция: старт **10 000 ₽**, **+1 000 ₽** в начале каждого месяца, те же правила core/satellite.
+
+```bash
+python3 -m bot.backtest
+```
+
+Период и суммы — в `.env` (`BACKTEST_START`, `BACKTEST_END`, `BACKTEST_INITIAL_RUB`, `BACKTEST_MONTHLY_DEPOSIT_RUB`).
+
 Состояние виртуального портфеля: `data/portfolio_state.json`.
 
 ## Архитектура

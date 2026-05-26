@@ -6,3 +6,4 @@ venv/
 *.egg-info/
 .pytest_cache/
 data/portfolio_state.json
+data/moex_cache/
