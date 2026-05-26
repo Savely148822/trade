@@ -17,6 +17,14 @@ DEFAULT_CORE_UNIVERSE: list[str] = [
 ]
 
 # Satellite: ликвидные, более волатильные (~20%)
+# Стабильные БПИФ для ежемесячного DCA (пополнение с зарплаты)
+DEFAULT_CORE_DCA_UNIVERSE: list[str] = [
+    "TMOS",  # индекс МосБиржи
+    "TRUR",  # вечный портфель
+    "LQDT",  # ликвидность / денежный рынок
+    "SBGB",  # гос. облигации
+]
+
 DEFAULT_SATELLITE_UNIVERSE: list[str] = [
     "VTBR",
     "AFKS",

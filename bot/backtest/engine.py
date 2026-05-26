@@ -17,6 +17,7 @@ from bot.data.moex_iss import (
     ohlc_before,
     prices_on,
 )
+from bot.portfolio.dca import apply_core_monthly_dca
 from bot.portfolio.executor import apply_core_signal, apply_satellite_signal
 from bot.portfolio.rebalancer import (
     rebalance_portfolio,
@@ -64,6 +65,10 @@ class BacktestResult:
     trades: int
     core_trades: int
     satellite_trades: int
+    dca_trades: int
+    total_commissions: float
+    inflation_drag_rub: float
+    real_profit_rub: float
     monthly: list[MonthlySnapshot] = field(default_factory=list)
 
 
@@ -90,7 +95,9 @@ def run_backtest(
     initial_capital: float,
     monthly_deposit: float,
 ) -> BacktestResult:
-    tickers = list(set(config.core_universe + config.satellite_universe))
+    tickers = list(
+        set(config.core_universe + config.satellite_universe + config.core_dca_universe)
+    )
     logger.info("Loading MOEX history %s … %s for %d tickers", start, end, len(tickers) + 1)
 
     histories: dict[str, dict[date, OhlcBar]] = {}
@@ -117,10 +124,12 @@ def run_backtest(
         month_key=trading_days[0].strftime("%Y-%m"),
     )
 
-    trades = core_trades = sat_trades = 0
+    trades = core_trades = sat_trades = dca_trades = 0
     total_deposits = 0.0
+    total_commissions = 0.0
     max_dd = 0.0
-    prev_month = trading_days[0].strftime("%Y-%m")
+    first_month = trading_days[0].strftime("%Y-%m")
+    prev_month = first_month
     daily_monthly: list[tuple[str, float, float, float, float]] = []
 
     for day in trading_days:
@@ -130,14 +139,17 @@ def run_backtest(
 
         month = day.strftime("%Y-%m")
         if month != prev_month:
-            state.core.cash_rub += monthly_deposit * config.core_weight
-            state.satellite.cash_rub += monthly_deposit * config.satellite_weight
-            total_deposits += monthly_deposit
+            if month != first_month:
+                state.core.cash_rub += monthly_deposit * config.core_weight
+                state.satellite.cash_rub += monthly_deposit * config.satellite_weight
+                total_deposits += monthly_deposit
+                dca_rub = monthly_deposit * config.core_weight
+                dt, dca_fee = apply_core_monthly_dca(state, prices, dca_rub, config)
+                dca_trades += dt
+                total_commissions += dca_fee
+                prices = prices_on(histories, tickers, day)
+                rebalance_portfolio(state, prices, config)
             prev_month = month
-            prices = prices_on(histories, tickers, day)
-            rebalance_portfolio(
-                state, prices, config.core_weight, config.satellite_weight
-            )
 
         prices = prices_on(histories, tickers, day)
         equity = state.total_equity(prices)
@@ -150,7 +162,7 @@ def run_backtest(
             state, prices, config.satellite_profit_rebalance_pct
         )
         if profit_hit:
-            rebalance_satellite_profit_trim(state, prices, config.satellite_weight)
+            rebalance_satellite_profit_trim(state, prices, config)
             prices = prices_on(histories, tickers, day)
 
         risk = check_risk(
@@ -177,19 +189,25 @@ def run_backtest(
             if sig:
                 core_signals.append(sig)
                 if sig.action in (CoreAction.SELL, CoreAction.TRIM):
-                    if apply_core_signal(state, sig):
+                    r = apply_core_signal(state, sig, config)
+                    if r:
                         trades += 1
                         core_trades += 1
+                        total_commissions += r.commission_rub
 
         buy_candidates = [s for s in core_signals if s.action == CoreAction.BUY]
         if buy_candidates:
             best = max(buy_candidates, key=lambda s: s.score)
-            if apply_core_signal(state, best):
+            r = apply_core_signal(state, best, config)
+            if r:
                 trades += 1
                 core_trades += 1
+                total_commissions += r.commission_rub
 
-        allow_sat = risk.allow_satellite and _index_regime_ok(
-            index, day, config.satellite_index_sma_period
+        allow_sat = (
+            risk.allow_satellite
+            and _index_regime_ok(index, day, config.satellite_index_sma_period)
+            and equity >= config.satellite_min_equity_rub
         )
         if allow_sat:
             for ticker in config.satellite_universe:
@@ -218,9 +236,11 @@ def run_backtest(
                     config.satellite_require_close_confirm,
                 )
                 if sig and sig.action != SatelliteAction.HOLD:
-                    if apply_satellite_signal(state, sig):
+                    r = apply_satellite_signal(state, sig, config)
+                    if r:
                         trades += 1
                         sat_trades += 1
+                        total_commissions += r.commission_rub
 
         prices = prices_on(histories, tickers, day)
         core_eq = state.core.equity(prices)
@@ -240,6 +260,11 @@ def run_backtest(
     sat_contributed = initial_capital * config.satellite_weight + total_deposits * config.satellite_weight
     core_profit = final_core - core_contributed
     sat_profit = final_sat - sat_contributed
+
+    years = max((trading_days[-1] - trading_days[0]).days / 365.25, 0.01)
+    infl_mult = (1 + config.inflation_annual_pct / 100) ** years
+    inflation_drag = contributed * (infl_mult - 1)
+    real_profit = profit - total_commissions - inflation_drag
 
     by_month: dict[str, tuple[float, float, float, float]] = {}
     for m, eq, c, s, contrib in daily_monthly:
@@ -279,6 +304,10 @@ def run_backtest(
         trades=trades,
         core_trades=core_trades,
         satellite_trades=sat_trades,
+        dca_trades=dca_trades,
+        total_commissions=total_commissions,
+        inflation_drag_rub=inflation_drag,
+        real_profit_rub=real_profit,
         monthly=monthly,
     )
 
@@ -323,7 +352,7 @@ def save_report_csv(result: BacktestResult, path: Path = REPORT_CSV) -> None:
             )
 
 
-def print_report(result: BacktestResult) -> None:
+def print_report(result: BacktestResult, config: Config) -> None:
     save_report_csv(result)
 
     print("\n" + "=" * 72)
@@ -336,11 +365,18 @@ def print_report(result: BacktestResult) -> None:
     print(f"Final equity:  {result.final_equity:,.0f} RUB")
     print(f"  Core:        {result.final_core:,.0f} RUB ({result.final_core/result.final_equity*100:.1f}%)")
     print(f"  Satellite:   {result.final_satellite:,.0f} RUB ({result.final_satellite/result.final_equity*100:.1f}%)")
-    print(f"Profit total:  {result.profit_rub:+,.0f} RUB ({result.return_on_contributed_pct:+.2f}% on contributed)")
-    print(f"  Core PnL:    {result.core_profit_rub:+,.0f} RUB")
-    print(f"  Satellite:   {result.satellite_profit_rub:+,.0f} RUB")
-    print(f"Max drawdown:  {result.max_drawdown_pct:.1f}%")
-    print(f"Trades:        {result.trades} (core {result.core_trades}, satellite {result.satellite_trades})")
+    print(f"Profit (nominal): {result.profit_rub:+,.0f} RUB ({result.return_on_contributed_pct:+.2f}%)")
+    print(f"  Core PnL:         {result.core_profit_rub:+,.0f} RUB")
+    print(f"  Satellite PnL:    {result.satellite_profit_rub:+,.0f} RUB")
+    print(f"Commissions:        −{result.total_commissions:,.0f} RUB")
+    print(f"Inflation (~{config.inflation_annual_pct:.0f}%/y): −{result.inflation_drag_rub:,.0f} RUB (est.)")
+    real_pct = (result.real_profit_rub / result.total_contributed * 100) if result.total_contributed else 0
+    print(f"≈ Real result:      {result.real_profit_rub:+,.0f} RUB ({real_pct:+.2f}% after fees & inflation)")
+    print(f"Max drawdown:       {result.max_drawdown_pct:.1f}%")
+    print(
+        f"Trades:             {result.trades} "
+        f"(DCA {result.dca_trades}, core {result.core_trades}, sat {result.satellite_trades})"
+    )
 
     print("\n--- Monthly: total / core / satellite ---")
     print(f"{'Month':<8} {'Total':>10} {'Core':>10} {'Sat':>10} {'C%':>5} {'S%':>5} {'Trading PnL':>12}")

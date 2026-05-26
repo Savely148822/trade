@@ -3,7 +3,11 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from bot.universe import DEFAULT_CORE_UNIVERSE, DEFAULT_SATELLITE_UNIVERSE
+from bot.universe import (
+    DEFAULT_CORE_DCA_UNIVERSE,
+    DEFAULT_CORE_UNIVERSE,
+    DEFAULT_SATELLITE_UNIVERSE,
+)
 
 load_dotenv()
 
@@ -26,10 +30,13 @@ class Config:
     core_weight: float
     satellite_weight: float
     paper_initial_rub: float
+    monthly_deposit_rub: float
     core_ma_fast: int
     core_ma_slow: int
     core_momentum_months: int
     core_universe: list[str]
+    core_dca_enabled: bool
+    core_dca_universe: list[str]
     satellite_universe: list[str]
     satellite_breakout_bars: int
     satellite_atr_period: int
@@ -44,6 +51,11 @@ class Config:
     satellite_ticker_sma_period: int
     satellite_require_close_confirm: bool
     satellite_profit_rebalance_pct: float
+    satellite_min_equity_rub: float
+    commission_pct: float
+    min_trade_rub: float
+    dca_min_trade_rub: float
+    inflation_annual_pct: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -62,13 +74,19 @@ class Config:
             finam_token=os.getenv("FINAM_TOKEN", ""),
             core_weight=core_w,
             satellite_weight=sat_w,
-            paper_initial_rub=float(os.getenv("PAPER_INITIAL_RUB", "1000000")),
+            paper_initial_rub=float(os.getenv("PAPER_INITIAL_RUB", "10000")),
+            monthly_deposit_rub=float(os.getenv("MONTHLY_DEPOSIT_RUB", "2000")),
             core_ma_fast=fast,
             core_ma_slow=slow,
             core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
             core_universe=_list(
                 os.getenv("CORE_UNIVERSE"),
                 ",".join(DEFAULT_CORE_UNIVERSE),
+            ),
+            core_dca_enabled=_bool(os.getenv("CORE_DCA_ENABLED"), True),
+            core_dca_universe=_list(
+                os.getenv("CORE_DCA_UNIVERSE"),
+                ",".join(DEFAULT_CORE_DCA_UNIVERSE),
             ),
             satellite_universe=_list(
                 os.getenv("SATELLITE_UNIVERSE"),
@@ -102,4 +120,9 @@ class Config:
             satellite_profit_rebalance_pct=float(
                 os.getenv("SATELLITE_PROFIT_REBALANCE_PCT", "20")
             ),
+            satellite_min_equity_rub=float(os.getenv("SATELLITE_MIN_EQUITY_RUB", "50000")),
+            commission_pct=float(os.getenv("COMMISSION_PCT", "0.1")),
+            min_trade_rub=float(os.getenv("MIN_TRADE_RUB", "3000")),
+            dca_min_trade_rub=float(os.getenv("DCA_MIN_TRADE_RUB", "400")),
+            inflation_annual_pct=float(os.getenv("INFLATION_ANNUAL_PCT", "8")),
         )

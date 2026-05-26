@@ -14,15 +14,17 @@ cp .env.example .env
 python -m bot
 ```
 
-## Бэктест (данные прошлого года, MOEX ISS)
+## Бэктест (~2 года, MOEX ISS)
 
-Симуляция: старт **10 000 ₽**, **+1 000 ₽** в начале каждого месяца, те же правила core/satellite.
+Симуляция: старт **10 000 ₽**, **+2 000 ₽** в начале каждого месяца (как `MONTHLY_DEPOSIT_RUB`), те же правила core/satellite.
+
+После пополнения core-доля **сразу уходит в DCA** (`CORE_DCA_UNIVERSE`: TMOS, TRUR, LQDT, SBGB). Комиссии и порог satellite **50 000 ₽** equity учитываются.
 
 ```bash
 python3 -m bot.backtest
 ```
 
-Период и суммы — в `.env` (`BACKTEST_START`, `BACKTEST_END`, `BACKTEST_INITIAL_RUB`, `BACKTEST_MONTHLY_DEPOSIT_RUB`).
+Период и суммы — в `.env` (`BACKTEST_START`, `BACKTEST_END`, `BACKTEST_INITIAL_RUB`, `BACKTEST_MONTHLY_DEPOSIT_RUB`, `COMMISSION_PCT`, `SATELLITE_MIN_EQUITY_RUB`).
 
 Состояние виртуального портфеля: `data/portfolio_state.json`.
 
@@ -35,7 +37,7 @@ bot/
   data/moex_iss.py       # котировки MOEX
   data/market_regime.py  # IMOEX, RVOL
   strategies/            # core momentum, satellite breakout
-  portfolio/             # paper-портфель, ребаланс 80/20
+  portfolio/             # paper-портфель, депозиты, DCA, ребаланс 80/20
   risk/                  # просадка, лимит satellite
   brokers/finam.py       # live — фаза 2
 ```

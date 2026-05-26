@@ -14,21 +14,23 @@ def main() -> None:
     start = date.fromisoformat(
         os.getenv(
             "BACKTEST_START",
-            (end - timedelta(days=365)).isoformat(),
+            (end - timedelta(days=730)).isoformat(),
         )
     )
     initial = float(os.getenv("BACKTEST_INITIAL_RUB", "10000"))
-    monthly = float(os.getenv("BACKTEST_MONTHLY_DEPOSIT_RUB", "1000"))
+    monthly = float(os.getenv("BACKTEST_MONTHLY_DEPOSIT_RUB", "2000"))
 
     print(
         f"Backtest: {start} → {end} | start {initial:,.0f} RUB | "
         f"+{monthly:,.0f} RUB/month"
     )
     print(f"Core: {', '.join(config.core_universe)}")
-    print(f"Sat:  {', '.join(config.satellite_universe)}\n")
+    print(f"DCA:  {', '.join(config.core_dca_universe)} (enabled={config.core_dca_enabled})")
+    print(f"Sat:  {', '.join(config.satellite_universe)} (if equity >= {config.satellite_min_equity_rub:,.0f})")
+    print(f"Fees: {config.commission_pct}% | min trade {config.min_trade_rub:,.0f} RUB\n")
 
     result = run_backtest(config, start, end, initial, monthly)
-    print_report(result)
+    print_report(result, config)
     print("Open data/backtest_report.csv in Excel/Sheets for charts.")
 
 

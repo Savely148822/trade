@@ -6,7 +6,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from bot.portfolio.executor import _sell
+from bot.config import Config
+from bot.portfolio.executor import sell_with_rules
 from bot.portfolio.state import PortfolioState, SleeveState
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ def _reduce_sleeve_positions(
     sleeve_name: str,
     prices: dict[str, float],
     rub_target: float,
+    config: Config,
 ) -> float:
     sold = 0.0
     for ticker in sorted(
@@ -92,7 +94,16 @@ def _reduce_sleeve_positions(
         value = pos.qty * px
         need = rub_target - sold
         fraction = min(1.0, need / value) if value > 0 else 1.0
-        result = _sell(sleeve, sleeve_name, ticker, px, fraction)
+        result = sell_with_rules(
+            sleeve,
+            sleeve_name,
+            ticker,
+            px,
+            config,
+            fraction,
+            tag="REBAL",
+            min_trade_override=0,
+        )
         if result:
             sold += result.rub
     return sold
@@ -101,8 +112,9 @@ def _reduce_sleeve_positions(
 def rebalance_satellite_profit_trim(
     state: PortfolioState,
     prices: dict[str, float],
-    satellite_weight: float,
+    config: Config,
 ) -> RebalanceReport:
+    satellite_weight = config.satellite_weight
     """Сливки с satellite до целевых 20% от total. Core-позиции не трогаем."""
     total = state.total_equity(prices)
     core_before = state.core.equity(prices)
@@ -126,7 +138,7 @@ def rebalance_satellite_profit_trim(
         excess = sat_eq - target_sat
         logger.info("  Trim satellite excess: %.0f RUB (positions stay in market)", excess)
         satellite_sold_rub = _reduce_sleeve_positions(
-            state.satellite, "satellite", prices, excess
+            state.satellite, "satellite", prices, excess, config
         )
         sat_eq = state.satellite.equity(prices)
 
@@ -172,11 +184,12 @@ def rebalance_satellite_profit_trim(
 def rebalance_portfolio(
     state: PortfolioState,
     prices: dict[str, float],
-    core_weight: float,
-    satellite_weight: float,
+    config: Config,
     *,
     trigger: str = "scheduled_monthly",
 ) -> RebalanceReport:
+    core_weight = config.core_weight
+    satellite_weight = config.satellite_weight
     """Плановый ребаланс 80/20: мягкая подгонка обоих рукавов, без полной ликвидации."""
     total = state.total_equity(prices)
     equity_at_last = state.equity_at_last_rebalance or state.initial_equity
@@ -219,7 +232,7 @@ def rebalance_portfolio(
     if total > 0 and sat_eq > target_sat * (1 + TOLERANCE_PCT / 100):
         excess = sat_eq - target_sat
         satellite_sold_rub = _reduce_sleeve_positions(
-            state.satellite, "satellite", prices, excess
+            state.satellite, "satellite", prices, excess, config
         )
         sat_eq = state.satellite.equity(prices)
 
@@ -233,7 +246,7 @@ def rebalance_portfolio(
     core_eq = state.core.equity(prices)
     if total > 0 and core_eq > target_core * (1 + TOLERANCE_PCT / 100):
         excess = core_eq - target_core
-        core_sold_rub = _reduce_sleeve_positions(state.core, "core", prices, excess)
+        core_sold_rub = _reduce_sleeve_positions(state.core, "core", prices, excess, config)
         transfer = min(excess, state.core.cash_rub)
         if transfer > 0:
             state.core.cash_rub -= transfer
