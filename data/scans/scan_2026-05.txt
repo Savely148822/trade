@@ -1,0 +1,8 @@
+MOEX GROWTH SCAN 2026-05 (as of 2026-05-26)
+Pool: 100 | Passed forecast+filters: 2
+Forecast model trained on 1158 samples
+
+  # Tkr     Fcst1m%   Mom6m%  vsIMOEX   VolMln    Score
+----------------------------------------------------------
+  1 LEAS        2.4      4.4      8.2     24.4     6.98
+  2 CNRU        1.0      7.9     11.7     80.7     5.96
