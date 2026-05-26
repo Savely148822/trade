@@ -12,10 +12,10 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from bot.analytics.total_return import (
+    adjusted_total_return_pct,
     dividend_preload_range,
     forecast_dividend_pct_1m,
     preload_dividends,
-    total_return_pct,
 )
 from bot.config import Config
 from bot.data.fundamentals import FundamentalSnapshot, fetch_fundamentals, revenue_growth_proxy
@@ -58,6 +58,9 @@ class ForecastResult:
     dividend_announced_1m_pct: float
     dividend_proxy_1m_pct: float
     dividend_source: str
+    dividend_payment_count: int
+    dividend_cycle_days: float | None
+    dividend_info_discount: float
     features: StockFeatures
     fundamentals: FundamentalSnapshot | None
     news: NewsSentiment | None
@@ -408,7 +411,7 @@ def _build_forecast_results(
             config,
             events=div_events.get(ticker) if div_events else None,
         )
-        forecast = total_return_pct(price_fc, div_fc.total_pct)
+        forecast = adjusted_total_return_pct(price_fc, div_fc, config)
         if min_fc > 0 and forecast < min_fc:
             continue
         if config.scan_strict_only and forecast <= 0:
@@ -430,6 +433,9 @@ def _build_forecast_results(
                 dividend_announced_1m_pct=round(div_fc.announced_pct, 2),
                 dividend_proxy_1m_pct=round(div_fc.proxy_pct, 2),
                 dividend_source=div_fc.source,
+                dividend_payment_count=div_fc.payment_count,
+                dividend_cycle_days=div_fc.cycle_days,
+                dividend_info_discount=round(div_fc.info_discount, 3),
                 features=feat,
                 fundamentals=fund,
                 news=news,

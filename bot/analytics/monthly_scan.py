@@ -32,6 +32,9 @@ class ScanRow:
     dividend_announced_1m_pct: float
     dividend_proxy_1m_pct: float
     dividend_source: str
+    dividend_payment_count: int = 0
+    dividend_cycle_days: float | None = None
+    dividend_info_discount: float = 1.0
     momentum_6m_pct: float
     rs_vs_index_pct: float
     revenue_proxy_pct: float
@@ -120,6 +123,9 @@ def scan_promising_stocks(
             dividend_announced_1m_pct=r.dividend_announced_1m_pct,
             dividend_proxy_1m_pct=r.dividend_proxy_1m_pct,
             dividend_source=r.dividend_source,
+            dividend_payment_count=r.dividend_payment_count,
+            dividend_cycle_days=r.dividend_cycle_days,
+            dividend_info_discount=r.dividend_info_discount,
             momentum_6m_pct=round(r.features.mom_6m * 100, 2),
             rs_vs_index_pct=round(r.features.rs_vs_index_6m * 100, 2),
             revenue_proxy_pct=round(r.features.revenue_growth_proxy * 100, 2),
@@ -207,12 +213,22 @@ def print_scan_report(report: ScanReport) -> None:
         div_label = {
             "moex": "MOEX",
             "proxy": "прокси",
-            "none": "—",
+            "none": "нет данных",
         }.get(p.dividend_source, p.dividend_source)
+        disc = (
+            f" ×{p.dividend_info_discount:.2f}"
+            if p.dividend_info_discount < 0.999
+            else ""
+        )
+        cycle = (
+            f" цикл~{int(p.dividend_cycle_days)}д"
+            if p.dividend_cycle_days and p.dividend_cycle_days >= 180
+            else ""
+        )
         print(
             f"  {p.rank:2d}. {p.ticker:<6}  total {p.forecast_1m_pct:+.1f}% "
-            f"(px {p.price_forecast_1m_pct:+.1f}% + div {p.dividend_forecast_1m_pct:.1f}% [{div_label}])  "
-            f"mom6m {p.momentum_6m_pct:+.1f}%  vs IMOEX {p.rs_vs_index_pct:+.1f}%"
+            f"(px {p.price_forecast_1m_pct:+.1f}% + div {p.dividend_forecast_1m_pct:.2f}% [{div_label}]{disc}{cycle})  "
+            f"выплат/36м {p.dividend_payment_count}  mom6m {p.momentum_6m_pct:+.1f}%"
         )
     if report.picks:
         print(f"\nCORE_UNIVERSE={','.join(p.ticker for p in report.picks)}")

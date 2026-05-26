@@ -62,6 +62,10 @@ class Config:
     dividend_tax_pct: float
     dividend_use_proxy: bool
     dividend_proxy_months: int
+    dividend_history_months: int
+    dividend_default_cycle_days: int
+    dividend_no_info_discount: float
+    dividend_sparse_discount: float
     inflation_annual_pct: float
 
     @classmethod
@@ -113,5 +117,9 @@ class Config:
             dividend_tax_pct=float(os.getenv("DIVIDEND_TAX_PCT", "13")),
             dividend_use_proxy=_bool(os.getenv("DIVIDEND_USE_PROXY"), True),
             dividend_proxy_months=int(os.getenv("DIVIDEND_PROXY_MONTHS", "12")),
+            dividend_history_months=int(os.getenv("DIVIDEND_HISTORY_MONTHS", "36")),
+            dividend_default_cycle_days=int(os.getenv("DIVIDEND_DEFAULT_CYCLE_DAYS", "365")),
+            dividend_no_info_discount=float(os.getenv("DIVIDEND_NO_INFO_DISCOUNT", "0.85")),
+            dividend_sparse_discount=float(os.getenv("DIVIDEND_SPARSE_DISCOUNT", "0.90")),
             inflation_annual_pct=float(os.getenv("INFLATION_ANNUAL_PCT", "8")),
         )
