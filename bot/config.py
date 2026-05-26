@@ -3,11 +3,7 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-from bot.universe import (
-    DEFAULT_CORE_DCA_UNIVERSE,
-    DEFAULT_CORE_UNIVERSE,
-    DEFAULT_SATELLITE_UNIVERSE,
-)
+from bot.universe import DEFAULT_CORE_UNIVERSE, DEFAULT_SATELLITE_UNIVERSE
 
 load_dotenv()
 
@@ -31,12 +27,11 @@ class Config:
     satellite_weight: float
     paper_initial_rub: float
     monthly_deposit_rub: float
-    core_ma_fast: int
-    core_ma_slow: int
     core_momentum_months: int
+    core_top_n: int
+    core_trend_sma: int
+    core_vol_lookback: int
     core_universe: list[str]
-    core_dca_enabled: bool
-    core_dca_universe: list[str]
     satellite_universe: list[str]
     satellite_breakout_bars: int
     satellite_atr_period: int
@@ -54,7 +49,8 @@ class Config:
     satellite_min_equity_rub: float
     commission_pct: float
     min_trade_rub: float
-    dca_min_trade_rub: float
+    include_dividends: bool
+    dividend_tax_pct: float
     inflation_annual_pct: float
 
     @classmethod
@@ -64,11 +60,6 @@ class Config:
         if abs(core_w + sat_w - 1.0) > 0.01:
             raise ValueError("CORE_WEIGHT + SATELLITE_WEIGHT must equal 1.0")
 
-        fast = int(os.getenv("CORE_MA_FAST", "50"))
-        slow = int(os.getenv("CORE_MA_SLOW", "200"))
-        if fast >= slow:
-            raise ValueError("CORE_MA_FAST must be less than CORE_MA_SLOW")
-
         return cls(
             paper_trading=_bool(os.getenv("PAPER_TRADING"), True),
             finam_token=os.getenv("FINAM_TOKEN", ""),
@@ -76,17 +67,13 @@ class Config:
             satellite_weight=sat_w,
             paper_initial_rub=float(os.getenv("PAPER_INITIAL_RUB", "10000")),
             monthly_deposit_rub=float(os.getenv("MONTHLY_DEPOSIT_RUB", "2000")),
-            core_ma_fast=fast,
-            core_ma_slow=slow,
             core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
+            core_top_n=int(os.getenv("CORE_TOP_N", "5")),
+            core_trend_sma=int(os.getenv("CORE_TREND_SMA", "200")),
+            core_vol_lookback=int(os.getenv("CORE_VOL_LOOKBACK", "20")),
             core_universe=_list(
                 os.getenv("CORE_UNIVERSE"),
                 ",".join(DEFAULT_CORE_UNIVERSE),
-            ),
-            core_dca_enabled=_bool(os.getenv("CORE_DCA_ENABLED"), True),
-            core_dca_universe=_list(
-                os.getenv("CORE_DCA_UNIVERSE"),
-                ",".join(DEFAULT_CORE_DCA_UNIVERSE),
             ),
             satellite_universe=_list(
                 os.getenv("SATELLITE_UNIVERSE"),
@@ -120,9 +107,10 @@ class Config:
             satellite_profit_rebalance_pct=float(
                 os.getenv("SATELLITE_PROFIT_REBALANCE_PCT", "20")
             ),
-            satellite_min_equity_rub=float(os.getenv("SATELLITE_MIN_EQUITY_RUB", "50000")),
+            satellite_min_equity_rub=float(os.getenv("SATELLITE_MIN_EQUITY_RUB", "30000")),
             commission_pct=float(os.getenv("COMMISSION_PCT", "0.1")),
             min_trade_rub=float(os.getenv("MIN_TRADE_RUB", "3000")),
-            dca_min_trade_rub=float(os.getenv("DCA_MIN_TRADE_RUB", "400")),
+            include_dividends=_bool(os.getenv("INCLUDE_DIVIDENDS"), True),
+            dividend_tax_pct=float(os.getenv("DIVIDEND_TAX_PCT", "13")),
             inflation_annual_pct=float(os.getenv("INFLATION_ANNUAL_PCT", "8")),
         )

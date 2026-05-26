@@ -1,12 +1,14 @@
 import logging
 import time
+from datetime import date, timedelta
 
 from bot.brokers.finam import FinamBroker
 from bot.config import Config
 from bot.data.market_regime import fetch_market_regime, ticker_above_sma
-from bot.data.moex_iss import fetch_daily_closes, fetch_daily_ohlc, fetch_last_price
+from bot.data.moex_iss import fetch_daily_ohlc, fetch_history, fetch_last_price
+from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.deposits import current_month_key, process_new_month
-from bot.portfolio.executor import apply_core_signal, apply_satellite_signal
+from bot.portfolio.executor import apply_satellite_signal
 from bot.portfolio.rebalancer import (
     rebalance_portfolio,
     rebalance_satellite_profit_trim,
@@ -15,7 +17,6 @@ from bot.portfolio.rebalancer import (
 )
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
-from bot.strategies.core_momentum import CoreAction, evaluate_core
 from bot.strategies.satellite_breakout import SatelliteAction, evaluate_satellite
 
 logger = logging.getLogger(__name__)
@@ -38,8 +39,10 @@ def _collect_prices(tickers: list[str]) -> dict[str, float]:
     return prices
 
 
-def _sum_commission(result) -> float:
-    return result.commission_rub if result else 0.0
+def _load_histories(tickers: list[str], lookback_days: int = 400) -> dict:
+    end = date.today()
+    start = end - timedelta(days=lookback_days)
+    return {t: fetch_history(t, start, end) for t in tickers}
 
 
 def run_cycle(config: Config) -> None:
@@ -47,15 +50,19 @@ def run_cycle(config: Config) -> None:
     mode = "PAPER" if config.paper_trading else "LIVE"
     state = load_state(config.paper_initial_rub, config.core_weight)
 
-    all_tickers = list(
-        set(config.core_universe + config.satellite_universe + config.core_dca_universe)
-    )
+    all_tickers = list(set(config.core_universe + config.satellite_universe))
     prices = _collect_prices(all_tickers)
+    today = date.today()
+    histories = _load_histories(config.core_universe)
 
     month = current_month_key()
     if state.month_key != month:
-        logger.info("--- New month: deposit + DCA + rebalance ---")
-        process_new_month(state, prices, config, month)
+        logger.info("--- New month: deposit + core portfolio rebalance ---")
+        process_new_month(state, prices, histories, today, config, month)
+        prices = _collect_prices(all_tickers)
+    elif not state.core.positions and state.core.cash_rub >= config.min_trade_rub:
+        logger.info("--- Initial core portfolio build ---")
+        rebalance_core_portfolio(state, prices, histories, today, config, tag="INIT")
         prices = _collect_prices(all_tickers)
 
     profit_hit, profit_reason = should_rebalance_satellite_profit(
@@ -67,7 +74,7 @@ def run_cycle(config: Config) -> None:
         prices = _collect_prices(all_tickers)
 
     if should_rebalance_scheduled(state, config.rebalance_interval_sec):
-        logger.info("--- Scheduled monthly rebalance ---")
+        logger.info("--- Scheduled 80/20 rebalance ---")
         rebalance_portfolio(state, prices, config)
         prices = _collect_prices(all_tickers)
 
@@ -86,33 +93,6 @@ def run_cycle(config: Config) -> None:
         risk.drawdown_pct,
         risk.message,
     )
-
-    core_signals = []
-    for ticker in config.core_universe:
-        closes = fetch_daily_closes(ticker, days=config.core_ma_slow + 30)
-        sig = evaluate_core(
-            ticker,
-            closes,
-            config.core_ma_fast,
-            config.core_ma_slow,
-            config.core_momentum_months,
-        )
-        if sig:
-            logger.info(
-                "CORE %s: %s (score=%.1f) — %s",
-                ticker,
-                sig.action.value,
-                sig.score,
-                sig.reason,
-            )
-            core_signals.append(sig)
-            if sig.action in (CoreAction.SELL, CoreAction.TRIM):
-                apply_core_signal(state, sig, config)
-
-    buy_candidates = [s for s in core_signals if s.action == CoreAction.BUY]
-    if buy_candidates:
-        best = max(buy_candidates, key=lambda s: s.score)
-        apply_core_signal(state, best, config)
 
     regime = fetch_market_regime(
         config.market_index,
@@ -155,10 +135,6 @@ def run_cycle(config: Config) -> None:
             equity,
             config.satellite_min_equity_rub,
         )
-    elif not risk.allow_satellite:
-        logger.warning("Satellite paused (risk): %s", risk.message)
-    else:
-        logger.warning("Satellite paused (market): %s", regime.reason)
 
     prices = _collect_prices(all_tickers)
     equity = state.total_equity(prices)
@@ -173,15 +149,15 @@ def run_cycle(config: Config) -> None:
         (sat_eq / equity * 100) if equity else 0,
     )
     save_state(state)
+    _ = broker
 
 
 def run_bot(config: Config) -> None:
     logger.info(
-        "Capital engine | core %.0f%% | deposit %.0f RUB/mo | DCA=%s | sat if equity>=%.0f",
-        config.core_weight * 100,
+        "Capital engine | core top-%d momentum stocks | deposit %.0f RUB/mo | div=%s",
+        config.core_top_n,
         config.monthly_deposit_rub,
-        config.core_dca_enabled,
-        config.satellite_min_equity_rub,
+        config.include_dividends,
     )
     while True:
         try:

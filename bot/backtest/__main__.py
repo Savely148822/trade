@@ -24,10 +24,13 @@ def main() -> None:
         f"Backtest: {start} → {end} | start {initial:,.0f} RUB | "
         f"+{monthly:,.0f} RUB/month"
     )
-    print(f"Core: {', '.join(config.core_universe)}")
-    print(f"DCA:  {', '.join(config.core_dca_universe)} (enabled={config.core_dca_enabled})")
-    print(f"Sat:  {', '.join(config.satellite_universe)} (if equity >= {config.satellite_min_equity_rub:,.0f})")
-    print(f"Fees: {config.commission_pct}% | min trade {config.min_trade_rub:,.0f} RUB\n")
+    print(f"Core universe ({len(config.core_universe)}): {', '.join(config.core_universe)}")
+    print(
+        f"Strategy: top {config.core_top_n} × {config.core_momentum_months}m momentum, "
+        f"price > SMA({config.core_trend_sma}), 1/σ weights"
+    )
+    print(f"Sat: {', '.join(config.satellite_universe)} (from {config.satellite_min_equity_rub:,.0f} RUB)")
+    print(f"Dividends in sim: {config.include_dividends} (tax {config.dividend_tax_pct:.0f}%)\n")
 
     result = run_backtest(config, start, end, initial, monthly)
     print_report(result, config)

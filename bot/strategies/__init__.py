@@ -1,9 +1,8 @@
-from bot.strategies.core_momentum import CoreSignal, evaluate_core
+from bot.strategies.cross_sectional import rank_by_momentum
 from bot.strategies.satellite_breakout import SatelliteSignal, evaluate_satellite
 
 __all__ = [
-    "CoreSignal",
-    "evaluate_core",
+    "rank_by_momentum",
     "SatelliteSignal",
     "evaluate_satellite",
 ]

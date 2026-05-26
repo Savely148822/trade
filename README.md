@@ -1,56 +1,65 @@
 # Trade — движок приращения капитала (РФ)
 
-Бот для **устойчивого роста капитала**: ~80% в долгую (БПИФ и акции MOEX), ~20% в тактический рукав. Весь доход реинвестируется в paper/live-портфель. Брокер: **Финам** (фаза 2), данные и paper — **MOEX ISS**.
+Бот для роста капитала: **~80% core** (свой портфель акций MOEX), **~20% satellite** (импульс). Без БПИФ: core собирается из ликвидных акций по **cross-sectional momentum** и весам **1/σ**.
 
-## План действий
+Данные и paper: **MOEX ISS**. Брокер live: **Финам** (фаза 2).
 
-Пошаговый чеклист: [docs/ACTION_PLAN.md](docs/ACTION_PLAN.md)
+## План
 
-## Быстрый старт (фаза 1 — paper)
+[docs/ACTION_PLAN.md](docs/ACTION_PLAN.md)
+
+## Быстрый старт
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-python -m bot
+python3 -m bot
 ```
 
-## Бэктест (~2 года, MOEX ISS)
-
-Симуляция: старт **10 000 ₽**, **+2 000 ₽** в начале каждого месяца (как `MONTHLY_DEPOSIT_RUB`), те же правила core/satellite.
-
-После пополнения core-доля **сразу уходит в DCA** (`CORE_DCA_UNIVERSE`: TMOS, TRUR, LQDT, SBGB). Комиссии и порог satellite **50 000 ₽** equity учитываются.
+## Бэктест
 
 ```bash
 python3 -m bot.backtest
 ```
 
-Период и суммы — в `.env` (`BACKTEST_START`, `BACKTEST_END`, `BACKTEST_INITIAL_RUB`, `BACKTEST_MONTHLY_DEPOSIT_RUB`, `COMMISSION_PCT`, `SATELLITE_MIN_EQUITY_RUB`).
+По умолчанию ~2 года, 10 000 ₽ старт + 2 000 ₽/мес. В отчёте: дивиденды (нетто), комиссии, бенчмарк equal-weight по всему core-universe.
 
-Состояние виртуального портфеля: `data/portfolio_state.json`.
+### Дивиденды и доходность цены
+
+| Что учитывается | Как |
+|-----------------|-----|
+| Рост цены акций | Дневные **close** MOEX ISS |
+| Дивиденды | `INCLUDE_DIVIDENDS=true`: выплаты по **дате отсечки** (registryclosedate), на кол-во акций в портфеле |
+| Налог на дивы | `DIVIDEND_TAX_PCT` (по умолчанию 13%) |
+| Комиссии | `COMMISSION_PCT` с оборота |
+| Реинвест дивов | Зачисление в кэш рукава (core/sat), дальше в ежемесячный ребаланс |
+
+**Не учитывается:** отсечка ≠ дата выплаты на счёт (упрощение), НДФЛ с продаж, купоны (только акции), корпоративные сплиты (редко — можно добавить).
+
+Цены **не total return** — без дивидендов котировка занижает long-only доходность; с `INCLUDE_DIVIDENDS` картина ближе к реальности.
+
+## Core-логика
+
+1. Раз в месяц (после пополнения): ранжирование universe по доходности за `CORE_MOMENTUM_MONTHS` месяцев.
+2. Фильтр: цена выше `CORE_TREND_SMA` (200).
+3. Держим топ `CORE_TOP_N`, веса ∝ 1/volatility (`CORE_VOL_LOOKBACK`).
+4. Продажа бумаг вне топа, подгонка весов.
+
+## Satellite
+
+Пробой + RVOL, IMOEX > SMA(20), тикер > SMA(50), equity ≥ `SATELLITE_MIN_EQUITY_RUB`.
 
 ## Архитектура
 
 ```
 bot/
-  config.py              # .env
-  runner.py              # главный цикл
-  data/moex_iss.py       # котировки MOEX
-  data/market_regime.py  # IMOEX, RVOL
-  strategies/            # core momentum, satellite breakout
-  portfolio/             # paper-портфель, депозиты, DCA, ребаланс 80/20
-  risk/                  # просадка, лимит satellite
-  brokers/finam.py       # live — фаза 2
+  strategies/cross_sectional.py
+  portfolio/core_portfolio.py
+  portfolio/dividends.py
+  data/moex_iss.py
+  data/moex_dividends.py
+  analytics/benchmark.py
+  backtest/engine.py
 ```
-
-**Satellite:** пробой по закрытию, RVOL ≥ 1.5, IMOEX выше SMA(20), тикер выше SMA(50).
-
-**Ребаланс (раз в месяц):** `REBALANCE_INTERVAL_SEC` ≈ 30 дней — мягкая подгонка **80/20** (сливки с перевеса, без продажи всего портфеля).  
-**Satellite +20%:** только **сливки** лишнего с спутника до новых 20% от total; остаток спутника **остаётся в бумагах**.
-
-## Следующий шаг для вас
-
-1. Открыть счёт **Финам**, получить токен Trade API.  
-2. 2–4 недели гонять `PAPER_TRADING=true`.  
-3. Подключить live (фаза 2 в плане).
 
 Не является инвестиционной рекомендацией.
