@@ -1,4 +1,4 @@
-"""Walk-forward replay на истории (2 года по умолчанию) — та же логика, что paper."""
+"""Walk-forward replay на истории (1 год по умолчанию) — та же логика, что paper."""
 
 import logging
 import os
@@ -16,7 +16,7 @@ def main() -> None:
     config = Config.from_env()
     end = date.fromisoformat(os.getenv("BACKTEST_END", date.today().isoformat()))
     start = date.fromisoformat(
-        os.getenv("BACKTEST_START", (end - timedelta(days=730)).isoformat())
+        os.getenv("BACKTEST_START", (end - timedelta(days=365)).isoformat())
     )
     initial = float(os.getenv("BACKTEST_INITIAL_RUB", str(config.paper_initial_rub)))
     monthly = float(os.getenv("BACKTEST_MONTHLY_DEPOSIT_RUB", str(config.monthly_deposit_rub)))
