@@ -27,12 +27,18 @@ def log_paper_status(state: PortfolioState, prices: dict[str, float], config: Co
 
     if state.core.positions:
         parts = []
+        bond_t = config.bond_ticker.upper()
         for ticker, pos in sorted(state.core.positions.items()):
             px = prices.get(ticker, pos.avg_price)
             val = pos.qty * px
             wt = val / equity * 100
             upl = (px - pos.avg_price) / pos.avg_price * 100 if pos.avg_price else 0
-            parts.append(f"{ticker} {wt:.0f}% ({upl:+.0f}%)")
+            label = f"{ticker} {wt:.0f}%"
+            if ticker.upper() == bond_t:
+                label += " [bond]"
+            else:
+                label += f" ({upl:+.0f}%)"
+            parts.append(label)
         lines.append("  " + " | ".join(parts))
     elif state.core.cash_rub >= config.core_min_trade_rub:
         lines.append("  позиций нет — кэш ждёт ребаланса")

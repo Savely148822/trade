@@ -485,6 +485,22 @@ def _rank_from_feats(
     )
 
 
+SCAN_FILL_TIERS = (
+    "strict",
+    "strict-soft",
+    "strict-positive",
+    "liquid-positive",
+    "liquid-top",
+)
+
+
+def _adaptive_tier_allowed(tier_name: str, config: Config) -> bool:
+    max_tier = config.scan_adaptive_max_tier
+    if max_tier not in SCAN_FILL_TIERS:
+        max_tier = "liquid-positive"
+    return SCAN_FILL_TIERS.index(tier_name) <= SCAN_FILL_TIERS.index(max_tier)
+
+
 def rank_with_forecast(
     candidates: list[tuple[str, dict[date, OhlcBar]]],
     index_series: dict[date, float],
@@ -561,6 +577,8 @@ def rank_with_forecast(
     best: list[ForecastResult] = []
     fill_tier = "empty"
     for tier_name, feats_map, min_fc, req_pos in attempts:
+        if not _adaptive_tier_allowed(tier_name, config):
+            continue
         if not feats_map:
             continue
         ranked = _rank_from_feats(

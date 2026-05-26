@@ -1,69 +1,62 @@
 # Trade — core-only движок (MOEX), paper-first
 
-**100% капитала в core.** Раз в месяц: скан MOEX → топ-N в `.env` → пополнение → ребаланс топ-5.
+**80% акции / 20% облигации (SBGB)** + core. Раз в месяц: скан → universe → ребаланс.
 
-## Быстрый старт (paper)
+## Быстрый старт
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-python3 -m bot.scan    # ручной скан + обновление CORE_UNIVERSE
-python3 -m bot         # paper-цикл (скан автоматически в новом месяце)
+python3 -m bot.scan
+python3 -m bot
 ```
 
-Состояние: `data/portfolio_state.json`. Отчёты скана: `data/scans/scan_YYYY-MM.*`.
+## Портфель
 
-## Как работает отбор (paper)
-
-1. **Скан** 100 ликвидных TQBR → прогноз total (цена + дивиденды).
-2. **Adaptive fill** — если строгих имён мало, ослабляет порог по ступеням до `SCAN_MIN_UNIVERSE`.
-3. **Портфель** — топ-5 из universe **в порядке скана** (`CORE_SELECT_SCAN_ORDER=true`).
-4. **EXIT** — досрочная продажа при плохом total-прогнозе (с учётом комиссии).
-5. **Дивиденды** — начисление на отсечку MOEX; прокси только для прогноза.
+| Доля | Инструмент | Логика |
+|------|------------|--------|
+| **80%** | топ-3…5 акций из скана | inverse-vol, **мин. 3 позиции** |
+| **20%** | `BOND_TICKER=SBGB` | ETF на ОФЗ, ребаланс каждый месяц |
 
 ```env
-SCAN_ADAPTIVE_FILL=true
-SCAN_MIN_UNIVERSE=10
-SCAN_MIN_FORECAST_PCT=0.5
-CORE_SELECT_SCAN_ORDER=true
-PAPER_TRADING=true
+CORE_TOP_N=5
+CORE_MIN_POSITIONS=3
+BOND_ALLOCATION_PCT=20
+BOND_TICKER=SBGB
+SCAN_ADAPTIVE_MAX_TIER=liquid-positive   # не опускаться до liquid-top
 ```
 
-## Данные
+## Adaptive fill
 
-| Слой | Источник |
-|------|----------|
-| Цена/объём | MOEX ISS |
-| Макро | IMOEX, USD/RUB, ставка ЦБ |
-| Фундаментал | ЦКИ (если есть) или прокси |
-| Новости | MOEX sitenews |
-| Дивиденды | MOEX dividends.json + прокси по истории |
+Ступени: `strict` → `strict-soft` → `strict-positive` → `liquid-positive` → `liquid-top`.  
+По умолчанию **не ниже `liquid-positive`** — слабые имена из `liquid-top` не попадают в universe.
 
-## EXIT и комиссия
+## Дивиденды — как считаем (реальная история MOEX)
 
-`EXIT_ON_NEGATIVE_FORECAST=true`, `SCAN_SELL_FORECAST_PCT=-1.0`, `EXIT_FEE_BUFFER=1.2`, `COMMISSION_PCT=0.1`.
+**Источник:** `iss.moex.com/iss/securities/{TICKER}/dividends.json` — фактические выплаты с датой отсечки и суммой на акцию.
 
-## Дивиденды в прогнозе
+**Paper / replay начисляет так:**
 
-- **MOEX** — объявленная отсечка в ближайший месяц.
-- **Прокси** — цикл выплат за 36 мес (не «/12 каждый месяц»).
-- **Скидки**: нет истории → total × 0.85; редкие выплаты → div × 0.90.
+1. В день **отсечки** (`registry_close`) смотрим: есть ли акции в портфеле.
+2. Если да → `qty × value × (1 − DIVIDEND_TAX_PCT)` в кэш.
+3. Если нет → 0.
 
-```env
-DIVIDEND_USE_PROXY=true
-DIVIDEND_HISTORY_MONTHS=36
-DIVIDEND_NO_INFO_DISCOUNT=0.85
-DIVIDEND_SPARSE_DISCOUNT=0.90
-```
+**Купил в середине года?**
 
-## Replay на истории (2 года)
+- Купил **до отсечки** → получишь эту выплату (как у брокера, если успел на реестр).
+- Купил **после отсечки** → эту выплату не получишь, только следующую.
+- Решение совета директоров уже заложено в MOEX: в API только **объявленные** выплаты, не «может быть».
 
-Та же логика, что paper-бот, день за днём на MOEX (walk-forward, без look-ahead по ликвидности):
+**Прокси-дивиденды** (`DIVIDEND_USE_PROXY`) — **только для прогноза** в скане/EXIT, в кэш не начисляются.
+
+**Почему за 2 года ~5–6k ₽ дивов?** Портфель 30–50k, бумаги-плательщики (SBER, X5, VTBR, LEAS, EUTR…), несколько отсечек в год, сумма растёт с размером позиции. Это не «лишние» деньги — они уже в `equity` (кэш после отсечки).
+
+## Replay на истории
 
 ```bash
 python3 -m bot.backtest
 ```
 
-Период: `BACKTEST_START` / `BACKTEST_END` в `.env` (по умолчанию 2 года). Отчёт: `data/paper_replay_report.csv`, сравнение с IMOEX DCA.
+Отчёт: `data/paper_replay_report.csv` (сравнение с IMOEX DCA).
 
 Не является инвестиционной рекомендацией.

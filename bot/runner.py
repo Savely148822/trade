@@ -53,6 +53,15 @@ def run_monthly_scan_and_env(config: Config) -> list[str]:
     return tickers
 
 
+def _cycle_tickers(config: Config, *, universe: list[str] | None = None, positions: list[str] | None = None) -> list[str]:
+    tickers = set(config.core_universe) | {config.bond_ticker.upper()}
+    if universe:
+        tickers |= set(universe)
+    if positions:
+        tickers |= set(positions)
+    return sorted(tickers)
+
+
 def run_cycle(config: Config) -> None:
     broker = FinamBroker(config.finam_token, config.paper_trading)
     mode = "PAPER" if config.paper_trading else "LIVE"
@@ -63,18 +72,20 @@ def run_cycle(config: Config) -> None:
         logger.info("=== New month: MOEX scan + .env + deposit + rebalance ===")
         universe = run_monthly_scan_and_env(config)
         config = Config.from_env()
-        histories = _load_histories(universe)
-        prices = _collect_prices(universe)
+        tickers = _cycle_tickers(config, universe=universe)
+        histories = _load_histories(tickers)
+        prices = _collect_prices(tickers)
         process_new_month(state, prices, histories, date.today(), config, month, universe=universe)
     elif not state.core.positions and state.core.cash_rub >= config.core_min_trade_rub:
         universe = config.core_universe
-        histories = _load_histories(universe)
-        prices = _collect_prices(universe)
+        tickers = _cycle_tickers(config, universe=universe)
+        histories = _load_histories(tickers)
+        prices = _collect_prices(tickers)
         rebalance_core_portfolio(
             state, prices, histories, date.today(), config, universe=universe, tag="INIT"
         )
 
-    tickers = list(set(config.core_universe) | set(state.core.positions.keys()))
+    tickers = _cycle_tickers(config, positions=list(state.core.positions.keys()))
     prices = _collect_prices(tickers)
 
     if config.include_dividends and state.core.positions:
@@ -111,9 +122,12 @@ def run_cycle(config: Config) -> None:
 
 def run_bot(config: Config) -> None:
     logger.info(
-        "Core-only engine | scan top-%d / hold top-%d | deposit %.0f RUB/mo",
+        "Core engine | scan top-%d / hold top-%d (min %d) | bond %.0f%% %s | deposit %.0f RUB/mo",
         config.scan_top_n,
         config.core_top_n,
+        config.core_min_positions,
+        config.bond_allocation_pct,
+        config.bond_ticker,
         config.monthly_deposit_rub,
     )
     while True:

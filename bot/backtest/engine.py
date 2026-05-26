@@ -114,7 +114,7 @@ def run_paper_replay(
     except Exception:
         scan_candidates = list(config.core_universe)
 
-    all_tickers = list(set(scan_candidates + config.core_universe))
+    all_tickers = list(set(scan_candidates + config.core_universe + [config.bond_ticker.upper()]))
     logger.info("Preloading %d tickers (%s → %s)…", len(all_tickers), preload_start, end)
     histories = _preload_histories(all_tickers, preload_start, end)
 
@@ -162,7 +162,11 @@ def run_paper_replay(
             continue
 
         if config.include_dividends:
-            div_tickers = list(set(state.core.positions.keys()) | set(active_universe))
+            div_tickers = [
+                t
+                for t in set(state.core.positions.keys()) | set(active_universe)
+                if t.upper() != config.bond_ticker.upper()
+            ]
             day_events = dividends_for_day(
                 div_tickers, day, preload_start, end, dividends_cache
             )
@@ -309,8 +313,10 @@ def print_report(result: ReplayResult, config: Config) -> None:
     print("=" * 72)
     print(f"Period:     {result.start} → {result.end}")
     print(
-        f"Config:     scan top-{config.scan_top_n} / hold top-{config.core_top_n} | "
-        f"adaptive={config.scan_adaptive_fill} min_universe={config.scan_min_universe}"
+        f"Config:     scan top-{config.scan_top_n} / hold top-{config.core_top_n} "
+        f"(min {config.core_min_positions} stocks) | "
+        f"bonds {config.bond_allocation_pct:.0f}% {config.bond_ticker} | "
+        f"adaptive≤{config.scan_adaptive_max_tier}"
     )
     print(f"Contributed:{result.total_contributed:,.0f} RUB → Final {result.final_equity:,.0f} RUB")
     print(f"Profit:     {result.profit_rub:+,.0f} RUB ({result.return_on_contributed_pct:+.2f}%)")

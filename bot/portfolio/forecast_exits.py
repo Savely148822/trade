@@ -83,6 +83,8 @@ def apply_forecast_exits(
     commissions = 0.0
 
     for ticker in list(state.core.positions.keys()):
+        if ticker.upper() == config.bond_ticker.upper():
+            continue
         px = prices.get(ticker)
         series = histories.get(ticker)
         if not px or not series:
