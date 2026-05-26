@@ -32,6 +32,15 @@ class Config:
     core_universe: list[str]
     scan_top_n: int
     scan_liquid_pool: int
+    scan_min_forecast_pct: float
+    scan_min_avg_turnover_rub: float
+    scan_min_price_rub: float
+    scan_max_vol_annual: float
+    scan_require_uptrend: bool
+    scan_require_beats_index: bool
+    forecast_train_days: int
+    forecast_min_train_samples: int
+    forecast_ridge_alpha: float
     max_drawdown_pct: float
     min_daily_volume_rub: float
     poll_interval_sec: int
@@ -60,6 +69,18 @@ class Config:
             ),
             scan_top_n=int(os.getenv("SCAN_TOP_N", "20")),
             scan_liquid_pool=int(os.getenv("SCAN_LIQUID_POOL", "100")),
+            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "0")),
+            scan_min_avg_turnover_rub=float(
+                os.getenv("SCAN_MIN_AVG_TURNOVER_RUB", "20_000_000").replace("_", "")
+            ),
+            scan_min_price_rub=float(os.getenv("SCAN_MIN_PRICE_RUB", "10")),
+            scan_max_vol_annual=float(os.getenv("SCAN_MAX_VOL_ANNUAL", "0.8")),
+            scan_require_uptrend=_bool(os.getenv("SCAN_REQUIRE_UPTREND"), True),
+            scan_require_beats_index=_bool(os.getenv("SCAN_REQUIRE_BEATS_INDEX"), True),
+            scan_strict_only=_bool(os.getenv("SCAN_STRICT_ONLY"), False),
+            forecast_train_days=int(os.getenv("FORECAST_TRAIN_DAYS", "504")),
+            forecast_min_train_samples=int(os.getenv("FORECAST_MIN_TRAIN_SAMPLES", "80")),
+            forecast_ridge_alpha=float(os.getenv("FORECAST_RIDGE_ALPHA", "1.0")),
             max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "20")),
             min_daily_volume_rub=float(os.getenv("MIN_DAILY_VOLUME_RUB", "5_000_000").replace("_", "")),
             poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "300")),

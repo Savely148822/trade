@@ -21,7 +21,10 @@ def main() -> None:
     tickers = apply_scan_to_env(report)
     load_dotenv(override=True)
     print(f"Saved: {path}")
-    print(f"Updated .env CORE_UNIVERSE ({len(tickers)} tickers)")
+    if tickers:
+        print(f"Updated .env CORE_UNIVERSE ({len(tickers)} tickers)")
+    else:
+        print("No tickers passed strict forecast filters — .env unchanged")
     print("Reload config in bot on next cycle.\n")
 
 

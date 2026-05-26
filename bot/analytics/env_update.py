@@ -41,5 +41,8 @@ def update_core_universe_env(
 
 def apply_scan_to_env(report: ScanReport, env_path: Path = ENV_PATH) -> list[str]:
     tickers = [p.ticker for p in report.picks]
+    if not tickers:
+        logger.warning("No picks — .env left unchanged")
+        return []
     update_core_universe_env(tickers, env_path)
     return tickers
