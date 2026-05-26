@@ -38,6 +38,13 @@ class Config:
     scan_max_vol_annual: float
     scan_require_uptrend: bool
     scan_require_beats_index: bool
+    scan_strict_only: bool
+    scan_require_positive_fund: bool
+    scan_require_macro_risk: bool
+    scan_min_list_level: int
+    scan_sma_tolerance_pct: float
+    scan_min_news_sentiment: float
+    scan_use_news: bool
     forecast_train_days: int
     forecast_min_train_samples: int
     forecast_ridge_alpha: float
@@ -69,7 +76,7 @@ class Config:
             ),
             scan_top_n=int(os.getenv("SCAN_TOP_N", "20")),
             scan_liquid_pool=int(os.getenv("SCAN_LIQUID_POOL", "100")),
-            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "0")),
+            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "1.0")),
             scan_min_avg_turnover_rub=float(
                 os.getenv("SCAN_MIN_AVG_TURNOVER_RUB", "20_000_000").replace("_", "")
             ),
@@ -77,7 +84,13 @@ class Config:
             scan_max_vol_annual=float(os.getenv("SCAN_MAX_VOL_ANNUAL", "0.8")),
             scan_require_uptrend=_bool(os.getenv("SCAN_REQUIRE_UPTREND"), True),
             scan_require_beats_index=_bool(os.getenv("SCAN_REQUIRE_BEATS_INDEX"), True),
-            scan_strict_only=_bool(os.getenv("SCAN_STRICT_ONLY"), False),
+            scan_strict_only=_bool(os.getenv("SCAN_STRICT_ONLY"), True),
+            scan_require_positive_fund=_bool(os.getenv("SCAN_REQUIRE_POSITIVE_FUND"), True),
+            scan_require_macro_risk=_bool(os.getenv("SCAN_REQUIRE_MACRO_RISK"), False),
+            scan_min_list_level=int(os.getenv("SCAN_MIN_LIST_LEVEL", "1")),
+            scan_sma_tolerance_pct=float(os.getenv("SCAN_SMA_TOLERANCE_PCT", "3.0")),
+            scan_min_news_sentiment=float(os.getenv("SCAN_MIN_NEWS_SENTIMENT", "0.0")),
+            scan_use_news=_bool(os.getenv("SCAN_USE_NEWS"), True),
             forecast_train_days=int(os.getenv("FORECAST_TRAIN_DAYS", "504")),
             forecast_min_train_samples=int(os.getenv("FORECAST_MIN_TRAIN_SAMPLES", "80")),
             forecast_ridge_alpha=float(os.getenv("FORECAST_RIDGE_ALPHA", "1.0")),

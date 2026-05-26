@@ -29,6 +29,8 @@ class ScanRow:
     forecast_1m_pct: float
     momentum_6m_pct: float
     rs_vs_index_pct: float
+    revenue_proxy_pct: float
+    news_sentiment: float
     valtoday_mln: float
     last_price: float
 
@@ -42,6 +44,9 @@ class ScanReport:
     top_n: int
     picks: list[ScanRow]
     model_samples: int = 0
+    strict_mode: bool = True
+    macro_summary: str = ""
+    min_forecast_pct: float = 1.0
 
 
 def _liquidity_pool_from_snapshot(
@@ -94,6 +99,9 @@ def scan_promising_stocks(
         model_samples = int(raw.get("n_samples", 0))
 
     candidates = [(t, histories[t]) for t in pool_tickers if t in histories]
+    from bot.data.macro import build_macro_snapshot
+
+    macro = build_macro_snapshot(as_of, config.market_index)
     ranked = rank_with_forecast(candidates, index_series, as_of, config, weights=weights)
 
     picks = [
@@ -104,6 +112,8 @@ def scan_promising_stocks(
             forecast_1m_pct=r.forecast_1m_pct,
             momentum_6m_pct=round(r.features.mom_6m * 100, 2),
             rs_vs_index_pct=round(r.features.rs_vs_index_6m * 100, 2),
+            revenue_proxy_pct=round(r.features.revenue_growth_proxy * 100, 2),
+            news_sentiment=round(r.features.news_sentiment, 2),
             valtoday_mln=round(r.features.avg_turnover_rub / 1_000_000, 2),
             last_price=round(r.features.last_price, 2),
         )
@@ -126,6 +136,11 @@ def scan_promising_stocks(
         top_n=config.scan_top_n,
         picks=picks,
         model_samples=model_samples,
+        strict_mode=config.scan_strict_only,
+        macro_summary=(
+            f"IMOEX 1m {macro.imoex_mom_1m*100:+.1f}% | USD {macro.usdrub_mom_1m*100:+.1f}% | "
+            f"ставка ЦБ {macro.cbr_key_rate_pct:.1f}%"
+        ),
     )
 
 
@@ -153,13 +168,14 @@ def save_scan_report(report: ScanReport) -> Path:
         f"Pool: {report.candidates_screened} | Passed forecast+filters: {report.passed_filters}",
         f"Forecast model trained on {report.model_samples} samples",
         "",
-        f"{'#':>3} {'Tkr':<6} {'Fcst1m%':>8} {'Mom6m%':>8} {'vsIMOEX':>8} {'VolMln':>8} {'Score':>8}",
+        f"{'#':>3} {'Tkr':<6} {'Fcst%':>7} {'Mom6m':>7} {'IMOEX':>7} {'Rev3m':>7} {'News':>5} {'VolM':>7} {'Sc':>6}",
         "-" * 58,
     ]
     for p in report.picks:
         lines.append(
-            f"{p.rank:3d} {p.ticker:<6} {p.forecast_1m_pct:8.1f} {p.momentum_6m_pct:8.1f} "
-            f"{p.rs_vs_index_pct:8.1f} {p.valtoday_mln:8.1f} {p.score:8.2f}"
+            f"{p.rank:3d} {p.ticker:<6} {p.forecast_1m_pct:7.1f} {p.momentum_6m_pct:7.1f} "
+            f"{p.rs_vs_index_pct:7.1f} {p.revenue_proxy_pct:7.0f} {p.news_sentiment:5.2f} "
+            f"{p.valtoday_mln:7.1f} {p.score:6.2f}"
         )
     txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -169,18 +185,17 @@ def print_scan_report(report: ScanReport) -> None:
     print("\n" + "=" * 64)
     print(f"MOEX GROWTH FORECAST SCAN — {report.month}")
     print("=" * 64)
-    print(
-        f"Прогноз: ожидаемая доходность за ~1 мес (21 день) по модели на истории."
-    )
-    print(
-        f"В рейтинг: {report.passed_filters} из {report.candidates_screened} "
-        f"(строгие фильтры + при нехватке — только ликвидность)"
-    )
+    print("Прогноз ~1 мес: цена/объём + макро (IMOEX, USD, ставка ЦБ) + фундаментал + новости MOEX")
+    mode = "СТРОГИЙ" if report.strict_mode else "обычный"
+    print(f"Режим: {mode} | в рейтинг: {report.passed_filters} из {report.candidates_screened}")
     print(f"Обучение модели: {report.model_samples} наблюдений\n")
+    if report.macro_summary:
+        print(f"Макро: {report.macro_summary}\n")
     for p in report.picks:
         print(
             f"  {p.rank:2d}. {p.ticker:<6}  прогноз {p.forecast_1m_pct:+.1f}%/мес  "
-            f"mom6m {p.momentum_6m_pct:+.1f}%  vs индекс {p.rs_vs_index_pct:+.1f}%"
+            f"mom6m {p.momentum_6m_pct:+.1f}%  vs IMOEX {p.rs_vs_index_pct:+.1f}%  "
+            f"оборот3м {p.revenue_proxy_pct:+.0f}%  news {p.news_sentiment:.2f}"
         )
     if report.picks:
         print(f"\nCORE_UNIVERSE={','.join(p.ticker for p in report.picks)}")

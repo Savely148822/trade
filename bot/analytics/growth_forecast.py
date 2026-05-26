@@ -1,8 +1,5 @@
 """
-Прогноз роста на 1 месяц (≈21 торг. день) по факторам цены/объёма.
-
-Это количественная модель на истории MOEX, не «гарантия» и не ML-оракул.
-Коэффициенты переобучаются на скользящем окне при каждом скане.
+Прогноз роста на ~1 месяц: цена/объём + макро (ЦБ, USD, IMOEX) + фундаментал + новости MOEX.
 """
 
 from __future__ import annotations
@@ -10,12 +7,15 @@ from __future__ import annotations
 import json
 import logging
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 from bot.config import Config
+from bot.data.fundamentals import FundamentalSnapshot, fetch_fundamentals, revenue_growth_proxy
+from bot.data.macro import MacroSnapshot, build_macro_snapshot
 from bot.data.moex_iss import OhlcBar, closes_before
+from bot.data.moex_news import NewsSentiment, news_sentiment_for_ticker
 from bot.strategies.cross_sectional import momentum_return
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,17 @@ class StockFeatures:
     mom_1m: float
     mom_3m: float
     mom_6m: float
-    mom_accel: float  # mom_3m - mom_6m/2
+    mom_accel: float
     rs_vs_index_6m: float
-    trend_slope_50: float  # % выше/ниже SMA50
+    trend_slope_50: float
     vol_annual: float
     avg_turnover_rub: float
     last_price: float
+    macro_risk_on: float
+    revenue_growth_proxy: float
+    news_sentiment: float
+    roe_proxy: float
+    margin_proxy: float
 
 
 @dataclass
@@ -43,6 +48,8 @@ class ForecastResult:
     ticker: str
     forecast_1m_pct: float
     features: StockFeatures
+    fundamentals: FundamentalSnapshot | None
+    news: NewsSentiment | None
     liquidity_score: float
     composite_score: float
 
@@ -68,12 +75,23 @@ def _realized_vol(closes: list[float], period: int = 20) -> float:
     return math.sqrt(var) * math.sqrt(252)
 
 
+def _macro_risk_from_index(index_series: dict[date, float], as_of: date) -> float:
+    closes = [index_series[d] for d in sorted(index_series) if d <= as_of][-70:]
+    if len(closes) < 22:
+        return 0.0
+    m1 = (closes[-1] - closes[-22]) / closes[-22] if closes[-22] else 0.0
+    return m1 * 2.0
+
+
 def extract_features(
     ticker: str,
     series: dict[date, OhlcBar],
     index_series: dict[date, float],
     as_of: date,
     *,
+    macro: MacroSnapshot | None = None,
+    news: NewsSentiment | None = None,
+    fund: FundamentalSnapshot | None = None,
     turnover_days: int = 20,
 ) -> StockFeatures | None:
     need = 6 * 21 + 30
@@ -100,6 +118,12 @@ def extract_features(
         sum(series[d].close * series[d].volume for d in days) / len(days) if days else 0.0
     )
 
+    rev = fund.revenue_growth_proxy if fund else revenue_growth_proxy(series, as_of)
+    macro_risk = macro.risk_on_score if macro else _macro_risk_from_index(index_series, as_of)
+    news_s = news.sentiment_score if news else 0.5
+    roe = fund.roe_proxy if fund and fund.roe_proxy is not None else 0.0
+    margin = fund.net_margin_proxy if fund and fund.net_margin_proxy is not None else 0.0
+
     return StockFeatures(
         ticker=ticker,
         mom_1m=mom_1m,
@@ -111,6 +135,11 @@ def extract_features(
         vol_annual=_realized_vol(closes),
         avg_turnover_rub=turnover,
         last_price=closes[-1],
+        macro_risk_on=macro_risk,
+        revenue_growth_proxy=rev,
+        news_sentiment=news_s,
+        roe_proxy=roe,
+        margin_proxy=margin,
     )
 
 
@@ -124,6 +153,11 @@ def feature_vector(f: StockFeatures) -> list[float]:
         f.rs_vs_index_6m,
         f.trend_slope_50,
         -f.vol_annual,
+        f.macro_risk_on,
+        f.revenue_growth_proxy,
+        f.news_sentiment - 0.5,
+        f.roe_proxy,
+        f.margin_proxy,
     ]
 
 
@@ -131,19 +165,13 @@ def _matrix_transpose(m: list[list[float]]) -> list[list[float]]:
     return [list(col) for col in zip(*m, strict=True)]
 
 
-def _mat_vec_mul(m: list[list[float]], v: list[float]) -> list[float]:
-    return [sum(a * b for a, b in zip(row, v, strict=True)) for row in m]
-
-
 def _solve_ridge(X: list[list[float]], y: list[float], alpha: float) -> list[float]:
-    """(X'X + αI) w = X'y"""
     n_feat = len(X[0])
     xt = _matrix_transpose(X)
     xtx = [[sum(xt[i][k] * X[k][j] for k in range(len(X))) for j in range(n_feat)] for i in range(n_feat)]
     xty = [sum(xt[i][k] * y[k] for k in range(len(y))) for i in range(n_feat)]
     for i in range(n_feat):
         xtx[i][i] += alpha
-    # Гаусс для малых матриц (8x8)
     aug = [xtx[i][:] + [xty[i]] for i in range(n_feat)]
     for col in range(n_feat):
         pivot = max(range(col, n_feat), key=lambda r: abs(aug[r][col]))
@@ -184,7 +212,6 @@ def fit_forecast_model(
     as_of: date,
     config: Config,
 ) -> list[float]:
-    """Обучение на панели: прошлые даты × тикеры с известным forward return."""
     train_days = config.forecast_train_days
     ordered_index_days = sorted(d for d in index_series if d <= as_of)
     if len(ordered_index_days) < train_days // 2:
@@ -210,71 +237,101 @@ def fit_forecast_model(
             y.append(fwd)
 
     if len(y) < config.forecast_min_train_samples:
-        logger.warning(
-            "Forecast train: only %d samples — using default weights", len(y)
-        )
+        logger.warning("Forecast train: %d samples — default weights", len(y))
         return _default_weights()
 
     weights = _solve_ridge(X, y, config.forecast_ridge_alpha)
-    _save_model(weights, len(y), as_of)
-    logger.info("Forecast model fit: %d samples, %d features", len(y), len(weights))
-    return weights
-
-
-def _default_weights() -> list[float]:
-    """Эвристика, если мало данных для обучения."""
-    return [0.0, 0.15, 0.25, 0.35, 0.20, 0.30, 0.10, -0.05]
-
-
-def _save_model(weights: list[float], n_samples: int, as_of: date) -> None:
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     MODEL_PATH.write_text(
         json.dumps(
             {
                 "as_of": as_of.isoformat(),
-                "n_samples": n_samples,
+                "n_samples": len(y),
                 "weights": weights,
                 "forward_days": FORWARD_DAYS,
+                "features": "price,macro,fund_proxy,news",
             },
             indent=2,
         )
     )
+    logger.info("Forecast model fit: %d samples, %d features", len(y), len(weights))
+    return weights
+
+
+def _default_weights() -> list[float]:
+    return [
+        0.0,
+        0.10,
+        0.15,
+        0.25,
+        0.12,
+        0.22,
+        0.08,
+        -0.04,
+        0.15,
+        0.18,
+        0.06,
+        0.05,
+        0.04,
+    ]
 
 
 def load_model_weights() -> list[float] | None:
     if not MODEL_PATH.exists():
         return None
     raw = json.loads(MODEL_PATH.read_text())
-    return raw.get("weights")
+    w = raw.get("weights")
+    if w and len(w) == len(_default_weights()):
+        return w
+    return None
 
 
 def predict_return(features: StockFeatures, weights: list[float]) -> float:
     x = feature_vector(features)
+    if len(x) != len(weights):
+        weights = _default_weights()
     return sum(w * xi for w, xi in zip(weights, x, strict=True))
 
 
-def passes_relaxed_filters(features: StockFeatures, config: Config) -> tuple[bool, str]:
-    """Только ликвидность и волатильность — если строгих кандидатов мало."""
+def passes_strict_filters(
+    features: StockFeatures,
+    config: Config,
+    fund: FundamentalSnapshot | None = None,
+    news: NewsSentiment | None = None,
+) -> tuple[bool, str]:
     if features.last_price < config.scan_min_price_rub:
         return False, f"price<{config.scan_min_price_rub}"
     if features.avg_turnover_rub < config.scan_min_avg_turnover_rub:
         return False, "low turnover"
-    if features.vol_annual > config.scan_max_vol_annual:
-        return False, "too volatile"
-    return True, "ok"
-
-
-def passes_strict_filters(features: StockFeatures, config: Config) -> tuple[bool, str]:
-    if features.last_price < config.scan_min_price_rub:
-        return False, f"price<{config.scan_min_price_rub}"
-    if features.avg_turnover_rub < config.scan_min_avg_turnover_rub:
-        return False, "low turnover"
+    if fund and fund.list_level < config.scan_min_list_level:
+        return False, f"list_level<{config.scan_min_list_level}"
     if config.scan_require_uptrend and features.mom_6m <= 0:
         return False, "mom6<=0"
-    if config.scan_require_uptrend and features.trend_slope_50 < 0:
+    tol = config.scan_sma_tolerance_pct / 100.0
+    if config.scan_require_uptrend and features.trend_slope_50 < -tol:
         return False, "below SMA50"
     if config.scan_require_beats_index and features.rs_vs_index_6m <= 0:
         return False, "lags IMOEX"
+    if features.vol_annual > config.scan_max_vol_annual:
+        return False, "too volatile"
+    if config.scan_require_positive_fund:
+        growth_ok = features.revenue_growth_proxy > 0 or (
+            features.mom_6m > 0.03 and features.rs_vs_index_6m > 0
+        )
+        if not growth_ok:
+            return False, "no growth signal"
+    if config.scan_require_macro_risk and features.macro_risk_on < 0:
+        return False, "macro_risk_off"
+    if news and news.sentiment_score < config.scan_min_news_sentiment:
+        return False, "weak news"
+    return True, "ok"
+
+
+def passes_relaxed_filters(features: StockFeatures, config: Config) -> tuple[bool, str]:
+    if features.last_price < config.scan_min_price_rub:
+        return False, f"price<{config.scan_min_price_rub}"
+    if features.avg_turnover_rub < config.scan_min_avg_turnover_rub:
+        return False, "low turnover"
     if features.vol_annual > config.scan_max_vol_annual:
         return False, "too volatile"
     return True, "ok"
@@ -282,33 +339,37 @@ def passes_strict_filters(features: StockFeatures, config: Config) -> tuple[bool
 
 def _build_forecast_results(
     feats_map: dict[str, StockFeatures],
+    meta: dict[str, tuple[FundamentalSnapshot | None, NewsSentiment | None]],
     weights: list[float],
     config: Config,
 ) -> list[ForecastResult]:
     results: list[ForecastResult] = []
     max_turn = max((f.avg_turnover_rub for f in feats_map.values()), default=0.0)
+    min_fc = config.scan_min_forecast_pct
+    if config.scan_strict_only and min_fc <= 0:
+        min_fc = 0.01
+
     for ticker, feat in feats_map.items():
         forecast = predict_return(feat, weights) * 100
+        if min_fc > 0 and forecast < min_fc:
+            continue
+        if config.scan_strict_only and forecast <= 0:
+            continue
         liq = feat.avg_turnover_rub / max_turn if max_turn else 0
-        composite = forecast * 0.85 + liq * 100 * 0.15
+        fund, news = meta.get(ticker, (None, None))
+        composite = forecast * 0.80 + liq * 100 * 0.10 + feat.news_sentiment * 10
         results.append(
             ForecastResult(
                 ticker=ticker,
                 forecast_1m_pct=round(forecast, 2),
                 features=feat,
+                fundamentals=fund,
+                news=news,
                 liquidity_score=round(liq, 4),
                 composite_score=round(composite, 3),
             )
         )
     results.sort(key=lambda r: r.composite_score, reverse=True)
-    if config.scan_min_forecast_pct > 0:
-        filtered = [r for r in results if r.forecast_1m_pct >= config.scan_min_forecast_pct]
-        if filtered:
-            return filtered
-        logger.warning(
-            "No names with forecast >= %.1f%% — using relative top ranks",
-            config.scan_min_forecast_pct,
-        )
     return results
 
 
@@ -321,27 +382,54 @@ def rank_with_forecast(
     weights: list[float] | None = None,
 ) -> list[ForecastResult]:
     w = weights or load_model_weights() or _default_weights()
+    macro = build_macro_snapshot(as_of, config.market_index)
+    news_cache = None
+    if config.scan_use_news:
+        from bot.data.moex_news import _fetch_sitenews
+
+        news_cache = _fetch_sitenews(300)
+
     strict_map: dict[str, StockFeatures] = {}
     relaxed_map: dict[str, StockFeatures] = {}
+    meta: dict[str, tuple[FundamentalSnapshot | None, NewsSentiment | None]] = {}
+
+    static_cache: dict[str, FundamentalSnapshot] = {}
 
     for ticker, series in candidates:
-        feat = extract_features(ticker, series, index_series, as_of)
+        try:
+            last_day = max(d for d in series if d <= as_of)
+            if ticker not in static_cache:
+                static_cache[ticker] = fetch_fundamentals(
+                    ticker, series, as_of, series[last_day].close
+                )
+            fund = static_cache[ticker]
+        except Exception:
+            fund = None
+        news = (
+            news_sentiment_for_ticker(ticker, as_of, news_cache=news_cache)
+            if config.scan_use_news
+            else None
+        )
+        feat = extract_features(
+            ticker, series, index_series, as_of, macro=macro, news=news, fund=fund
+        )
         if not feat:
             continue
-        if passes_strict_filters(feat, config)[0]:
+        meta[ticker] = (fund, news)
+        if passes_strict_filters(feat, config, fund, news)[0]:
             strict_map[ticker] = feat
-        elif passes_relaxed_filters(feat, config)[0]:
+        elif not config.scan_strict_only and passes_relaxed_filters(feat, config)[0]:
             relaxed_map[ticker] = feat
 
     feats_map = strict_map
-    results = _build_forecast_results(feats_map, w, config)
-    if len(results) < config.scan_top_n and relaxed_map:
-        logger.info(
-            "Strict filters: %d names — adding relaxed (liquidity only)",
-            len(results),
-        )
+    results = _build_forecast_results(feats_map, meta, w, config)
+    if (
+        not config.scan_strict_only
+        and len(results) < config.scan_top_n
+        and relaxed_map
+    ):
         for t, f in relaxed_map.items():
             if t not in feats_map:
                 feats_map[t] = f
-        results = _build_forecast_results(feats_map, w, config)
+        results = _build_forecast_results(feats_map, meta, w, config)
     return results
