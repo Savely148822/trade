@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
@@ -108,3 +108,19 @@ def load_dividends_by_day(
         for ev in fetch_dividends(t, start, end):
             by_day.setdefault(ev.registry_close, []).append(ev)
     return by_day
+
+
+def events_on_day(
+    tickers: list[str],
+    day: date,
+    *,
+    lookback_days: int = 7,
+) -> list[DividendEvent]:
+    """События с отсечкой в [day - lookback, day] — на случай пропущенных циклов."""
+    start = day - timedelta(days=lookback_days)
+    out: list[DividendEvent] = []
+    for t in tickers:
+        for ev in fetch_dividends(t, start, day):
+            if ev.registry_close == day:
+                out.append(ev)
+    return out

@@ -11,6 +11,7 @@ from bot.config import Config
 from bot.data.moex_iss import fetch_history, fetch_last_price
 from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.deposits import current_month_key, process_new_month
+from bot.portfolio.dividends import process_dividends_through
 from bot.portfolio.forecast_exits import apply_forecast_exits
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
@@ -75,6 +76,12 @@ def run_cycle(config: Config) -> None:
     tickers = list(set(config.core_universe) | set(state.core.positions.keys()))
     prices = _collect_prices(tickers)
 
+    if config.include_dividends and state.core.positions:
+        div_net = process_dividends_through(state, date.today(), config)
+        if div_net > 0:
+            logger.info("Dividends credited: +%.0f RUB (total %.0f RUB)", div_net, state.total_dividends_net_rub)
+            prices = _collect_prices(tickers)
+
     if state.core.positions and config.exit_on_negative_forecast:
         held = list(state.core.positions.keys())
         histories = _load_histories(held)
@@ -89,9 +96,10 @@ def run_cycle(config: Config) -> None:
     equity = state.core.equity(prices)
 
     logger.info(
-        "=== [%s] equity=%.0f RUB | DD=%.1f%% | universe %d names | %s ===",
+        "=== [%s] equity=%.0f RUB | div +%.0f | DD=%.1f%% | universe %d | %s ===",
         mode,
         equity,
+        state.total_dividends_net_rub,
         risk.drawdown_pct,
         len(config.core_universe),
         risk.message,

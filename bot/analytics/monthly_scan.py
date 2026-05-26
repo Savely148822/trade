@@ -27,6 +27,8 @@ class ScanRow:
     ticker: str
     score: float
     forecast_1m_pct: float
+    price_forecast_1m_pct: float
+    dividend_forecast_1m_pct: float
     momentum_6m_pct: float
     rs_vs_index_pct: float
     revenue_proxy_pct: float
@@ -110,6 +112,8 @@ def scan_promising_stocks(
             ticker=r.ticker,
             score=r.composite_score,
             forecast_1m_pct=r.forecast_1m_pct,
+            price_forecast_1m_pct=r.price_forecast_1m_pct,
+            dividend_forecast_1m_pct=r.dividend_forecast_1m_pct,
             momentum_6m_pct=round(r.features.mom_6m * 100, 2),
             rs_vs_index_pct=round(r.features.rs_vs_index_6m * 100, 2),
             revenue_proxy_pct=round(r.features.revenue_growth_proxy * 100, 2),
@@ -169,12 +173,13 @@ def save_scan_report(report: ScanReport) -> Path:
         f"Pool: {report.candidates_screened} | Passed forecast+filters: {report.passed_filters}",
         f"Forecast model trained on {report.model_samples} samples",
         "",
-        f"{'#':>3} {'Tkr':<6} {'Fcst%':>7} {'Mom6m':>7} {'IMOEX':>7} {'Rev3m':>7} {'News':>5} {'VolM':>7} {'Sc':>6}",
-        "-" * 58,
+        f"{'#':>3} {'Tkr':<6} {'Tot%':>6} {'Px%':>6} {'Div%':>5} {'Mom6m':>7} {'IMOEX':>7} {'Rev3m':>7} {'News':>5} {'VolM':>7} {'Sc':>6}",
+        "-" * 68,
     ]
     for p in report.picks:
         lines.append(
-            f"{p.rank:3d} {p.ticker:<6} {p.forecast_1m_pct:7.1f} {p.momentum_6m_pct:7.1f} "
+            f"{p.rank:3d} {p.ticker:<6} {p.forecast_1m_pct:6.1f} {p.price_forecast_1m_pct:6.1f} "
+            f"{p.dividend_forecast_1m_pct:5.1f} {p.momentum_6m_pct:7.1f} "
             f"{p.rs_vs_index_pct:7.1f} {p.revenue_proxy_pct:7.0f} {p.news_sentiment:5.2f} "
             f"{p.valtoday_mln:7.1f} {p.score:6.2f}"
         )
@@ -186,7 +191,7 @@ def print_scan_report(report: ScanReport) -> None:
     print("\n" + "=" * 64)
     print(f"MOEX GROWTH FORECAST SCAN — {report.month}")
     print("=" * 64)
-    print("Прогноз ~1 мес: цена/объём + макро (IMOEX, USD, ставка ЦБ) + фундаментал + новости MOEX")
+    print("Прогноз ~1 мес: цена + дивиденды (нетто) + макро + фундаментал + новости MOEX")
     mode = "СТРОГИЙ" if report.strict_mode else "обычный"
     print(f"Режим: {mode} | в рейтинг: {report.passed_filters} из {report.candidates_screened}")
     print(f"Обучение модели: {report.model_samples} наблюдений\n")
@@ -194,7 +199,8 @@ def print_scan_report(report: ScanReport) -> None:
         print(f"Макро: {report.macro_summary}\n")
     for p in report.picks:
         print(
-            f"  {p.rank:2d}. {p.ticker:<6}  прогноз {p.forecast_1m_pct:+.1f}%/мес  "
+            f"  {p.rank:2d}. {p.ticker:<6}  total {p.forecast_1m_pct:+.1f}% "
+            f"(px {p.price_forecast_1m_pct:+.1f}% + div {p.dividend_forecast_1m_pct:.1f}%)  "
             f"mom6m {p.momentum_6m_pct:+.1f}%  vs IMOEX {p.rs_vs_index_pct:+.1f}%  "
             f"оборот3м {p.revenue_proxy_pct:+.0f}%  news {p.news_sentiment:.2f}"
         )

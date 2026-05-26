@@ -69,6 +69,18 @@ python3 -m bot.backtest
 
 ## Дивиденды
 
-В бэктесте: дата отсечки MOEX ISS, налог `DIVIDEND_TAX_PCT`. Цены — close (не total return).
+| Где | Что |
+|-----|-----|
+| **Paper / live цикл** | На дату отсечки MOEX — зачисление в кэш (нетто `DIVIDEND_TAX_PCT`) |
+| **Скан / отбор** | Прогноз **total** = цена + ожидаемые дивы за ~1 мес |
+| **Выход EXIT** | Сравнивается **total**-прогноз (цена+div), не только цена |
+| **Бэктест** | Дивиденды по календарю отсечек, учёт в equity и отчёте |
+
+```env
+INCLUDE_DIVIDENDS=true
+DIVIDEND_TAX_PCT=13
+```
+
+Цены в данных — close (без автоматического total return); дивиденды добавляются явно. Состояние paper: `total_dividends_net_rub` в `data/portfolio_state.json`.
 
 Не является инвестиционной рекомендацией.

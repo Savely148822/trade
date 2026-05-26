@@ -8,9 +8,14 @@ import json
 import logging
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
+from bot.analytics.total_return import (
+    expected_dividend_pct_1m,
+    preload_dividends,
+    total_return_pct,
+)
 from bot.config import Config
 from bot.data.fundamentals import FundamentalSnapshot, fetch_fundamentals, revenue_growth_proxy
 from bot.data.macro import MacroSnapshot, build_macro_snapshot
@@ -47,6 +52,8 @@ class StockFeatures:
 class ForecastResult:
     ticker: str
     forecast_1m_pct: float
+    price_forecast_1m_pct: float
+    dividend_forecast_1m_pct: float
     features: StockFeatures
     fundamentals: FundamentalSnapshot | None
     news: NewsSentiment | None
@@ -192,6 +199,10 @@ def _forward_return(
     series: dict[date, OhlcBar],
     as_of: date,
     days: int = FORWARD_DAYS,
+    *,
+    ticker: str = "",
+    div_cache: dict[str, list] | None = None,
+    config: Config | None = None,
 ) -> float | None:
     ordered = sorted(d for d in series if d <= as_of)
     if len(ordered) < 2:
@@ -203,7 +214,22 @@ def _forward_return(
     end_px = series[future_days[-1]].close
     if start_px <= 0:
         return None
-    return (end_px - start_px) / start_px
+    price_ret = (end_px - start_px) / start_px
+
+    if not config or not config.include_dividends or not div_cache or not ticker:
+        return price_ret
+
+    from bot.analytics.total_return import dividend_return_decimal
+
+    end_reg = future_days[-1]
+    div_ret = dividend_return_decimal(
+        div_cache.get(ticker, []),
+        as_of,
+        end_reg,
+        start_px,
+        config,
+    )
+    return price_ret + div_ret
 
 
 def fit_forecast_model(
@@ -221,11 +247,29 @@ def fit_forecast_model(
 
     X: list[list[float]] = []
     y: list[float] = []
+    div_cache = None
+    if config.include_dividends:
+        all_days = sorted(
+            d
+            for series in histories.values()
+            for d in series
+            if d <= as_of
+        )
+        div_start = all_days[0] if all_days else as_of
+        div_cache = preload_dividends(list(histories.keys()), div_start, as_of + timedelta(days=FORWARD_DAYS + 5))
+
     for ticker, series in histories.items():
         for d in sample_dates:
             if d not in series:
                 continue
-            fwd = _forward_return(series, d, FORWARD_DAYS)
+            fwd = _forward_return(
+                series,
+                d,
+                FORWARD_DAYS,
+                ticker=ticker,
+                div_cache=div_cache,
+                config=config,
+            )
             if fwd is None:
                 continue
             feat = extract_features(ticker, series, index_series, d)
@@ -249,7 +293,7 @@ def fit_forecast_model(
                 "n_samples": len(y),
                 "weights": weights,
                 "forward_days": FORWARD_DAYS,
-                "features": "price,macro,fund_proxy,news",
+                "features": "price,macro,fund_proxy,news,total_return_target",
             },
             indent=2,
         )
@@ -342,6 +386,8 @@ def _build_forecast_results(
     meta: dict[str, tuple[FundamentalSnapshot | None, NewsSentiment | None]],
     weights: list[float],
     config: Config,
+    as_of: date,
+    div_events: dict[str, list] | None = None,
 ) -> list[ForecastResult]:
     results: list[ForecastResult] = []
     max_turn = max((f.avg_turnover_rub for f in feats_map.values()), default=0.0)
@@ -350,18 +396,32 @@ def _build_forecast_results(
         min_fc = 0.01
 
     for ticker, feat in feats_map.items():
-        forecast = predict_return(feat, weights) * 100
+        price_fc = predict_return(feat, weights) * 100
+        div_fc = (
+            expected_dividend_pct_1m(
+                ticker,
+                feat.last_price,
+                as_of,
+                config,
+                events=div_events.get(ticker) if div_events else None,
+            )
+            if config.include_dividends
+            else 0.0
+        )
+        forecast = total_return_pct(price_fc, div_fc)
         if min_fc > 0 and forecast < min_fc:
             continue
         if config.scan_strict_only and forecast <= 0:
             continue
         liq = feat.avg_turnover_rub / max_turn if max_turn else 0
         fund, news = meta.get(ticker, (None, None))
-        composite = forecast * 0.80 + liq * 100 * 0.10 + feat.news_sentiment * 10
+        composite = forecast * 0.75 + liq * 100 * 0.10 + feat.news_sentiment * 10 + div_fc * 0.10
         results.append(
             ForecastResult(
                 ticker=ticker,
                 forecast_1m_pct=round(forecast, 2),
+                price_forecast_1m_pct=round(price_fc, 2),
+                dividend_forecast_1m_pct=round(div_fc, 2),
                 features=feat,
                 fundamentals=fund,
                 news=news,
@@ -422,7 +482,16 @@ def rank_with_forecast(
             relaxed_map[ticker] = feat
 
     feats_map = strict_map
-    results = _build_forecast_results(feats_map, meta, w, config)
+    div_events = (
+        preload_dividends(
+            list(feats_map.keys()),
+            as_of,
+            as_of + timedelta(days=FORWARD_DAYS + 30),
+        )
+        if config.include_dividends and feats_map
+        else None
+    )
+    results = _build_forecast_results(feats_map, meta, w, config, as_of, div_events)
     if (
         not config.scan_strict_only
         and len(results) < config.scan_top_n
@@ -431,5 +500,14 @@ def rank_with_forecast(
         for t, f in relaxed_map.items():
             if t not in feats_map:
                 feats_map[t] = f
-        results = _build_forecast_results(feats_map, meta, w, config)
+        div_events = (
+            preload_dividends(
+                list(feats_map.keys()),
+                as_of,
+                as_of + timedelta(days=FORWARD_DAYS + 30),
+            )
+            if config.include_dividends
+            else None
+        )
+        results = _build_forecast_results(feats_map, meta, w, config, as_of, div_events)
     return results

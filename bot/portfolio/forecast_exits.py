@@ -10,6 +10,7 @@ from bot.analytics.growth_forecast import (
     load_model_weights,
     predict_return,
 )
+from bot.analytics.total_return import expected_dividend_pct_1m, total_return_pct
 from bot.config import Config
 from bot.data.fundamentals import fetch_fundamentals
 from bot.data.macro import MacroSnapshot, build_macro_snapshot
@@ -104,6 +105,9 @@ def apply_forecast_exits(
             continue
 
         forecast_pct = predict_return(feat, weights) * 100.0
+        if config.include_dividends:
+            div_pct = expected_dividend_pct_1m(ticker, px, as_of, config)
+            forecast_pct = total_return_pct(forecast_pct, div_pct)
         exit_ok, reason = should_exit_position(forecast_pct, value, config)
         if not exit_ok:
             logger.debug("%s: %s (fcst %+.1f%%)", ticker, reason, forecast_pct)
