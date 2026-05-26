@@ -49,6 +49,7 @@ class Config:
     satellite_min_equity_rub: float
     commission_pct: float
     min_trade_rub: float
+    core_min_trade_rub: float
     include_dividends: bool
     dividend_tax_pct: float
     inflation_annual_pct: float
@@ -69,7 +70,7 @@ class Config:
             monthly_deposit_rub=float(os.getenv("MONTHLY_DEPOSIT_RUB", "2000")),
             core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
             core_top_n=int(os.getenv("CORE_TOP_N", "5")),
-            core_trend_sma=int(os.getenv("CORE_TREND_SMA", "200")),
+            core_trend_sma=int(os.getenv("CORE_TREND_SMA", "0")),
             core_vol_lookback=int(os.getenv("CORE_VOL_LOOKBACK", "20")),
             core_universe=_list(
                 os.getenv("CORE_UNIVERSE"),
@@ -110,6 +111,7 @@ class Config:
             satellite_min_equity_rub=float(os.getenv("SATELLITE_MIN_EQUITY_RUB", "30000")),
             commission_pct=float(os.getenv("COMMISSION_PCT", "0.1")),
             min_trade_rub=float(os.getenv("MIN_TRADE_RUB", "3000")),
+            core_min_trade_rub=float(os.getenv("CORE_MIN_TRADE_RUB", "500")),
             include_dividends=_bool(os.getenv("INCLUDE_DIVIDENDS"), True),
             dividend_tax_pct=float(os.getenv("DIVIDEND_TAX_PCT", "13")),
             inflation_annual_pct=float(os.getenv("INFLATION_ANNUAL_PCT", "8")),

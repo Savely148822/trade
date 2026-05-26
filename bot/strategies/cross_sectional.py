@@ -24,21 +24,22 @@ def rank_by_momentum(
     as_of: date,
     momentum_months: int,
     *,
-    min_price_above_sma: int | None = 200,
+    min_price_above_sma: int | None = None,
 ) -> list[tuple[str, float]]:
     """Список (ticker, momentum) по убыванию momentum."""
+    sma_period = min_price_above_sma if min_price_above_sma and min_price_above_sma > 0 else None
     scored: list[tuple[str, float]] = []
     for ticker in universe:
         series = histories.get(ticker, {})
         need = momentum_months * 21 + 5
-        if min_price_above_sma:
-            need = max(need, min_price_above_sma + 2)
+        if sma_period:
+            need = max(need, sma_period + 2)
         closes = closes_before(series, as_of, need)
         mom = momentum_return(closes, momentum_months)
         if mom is None:
             continue
-        if min_price_above_sma and len(closes) >= min_price_above_sma:
-            sma = sum(closes[-min_price_above_sma:]) / min_price_above_sma
+        if sma_period and len(closes) >= sma_period:
+            sma = sum(closes[-sma_period:]) / sma_period
             if closes[-1] < sma:
                 continue
         scored.append((ticker, mom))

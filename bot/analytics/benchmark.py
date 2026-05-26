@@ -38,9 +38,10 @@ def run_equal_weight_benchmark(
     if not days:
         raise RuntimeError("No trading days for benchmark")
 
+    core_cash = initial_capital * config.core_weight
     state = PortfolioState(
-        core=SleeveState(cash_rub=initial_capital),
-        satellite=SleeveState(cash_rub=0.0),
+        core=SleeveState(cash_rub=core_cash),
+        satellite=SleeveState(cash_rub=initial_capital * config.satellite_weight),
         initial_equity=initial_capital,
         peak_equity=initial_capital,
         equity_at_last_rebalance=initial_capital,
@@ -90,13 +91,14 @@ def run_equal_weight_benchmark(
         month = day.strftime("%Y-%m")
         if month != prev_month:
             if month != first_month:
-                state.core.cash_rub += initial_capital * 0 + monthly_deposit
+                state.core.cash_rub += monthly_deposit * config.core_weight
+                state.satellite.cash_rub += monthly_deposit * config.satellite_weight
                 total_deposits += monthly_deposit
                 _rebalance_equal(day)
             prev_month = month
 
     prices = prices_on(histories, tickers, days[-1])
-    final = state.core.equity(prices)
+    final = state.core.equity(prices) + state.satellite.equity(prices)
     contributed = initial_capital + total_deposits
     profit = final - contributed
     return BenchmarkResult(

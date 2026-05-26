@@ -56,13 +56,28 @@ def select_core_holdings(
     as_of: date,
     config: Config,
 ) -> list[str]:
+    sma = config.core_trend_sma if config.core_trend_sma > 0 else None
     ranked = rank_by_momentum(
         histories,
         config.core_universe,
         as_of,
         config.core_momentum_months,
-        min_price_above_sma=config.core_trend_sma,
+        min_price_above_sma=sma,
     )
+    if not ranked and sma:
+        ranked = rank_by_momentum(
+            histories,
+            config.core_universe,
+            as_of,
+            config.core_momentum_months,
+            min_price_above_sma=None,
+        )
+        if ranked:
+            logger.info("Core: SMA(%s) filter empty — using momentum only", sma)
+    if not ranked:
+        # Крайний случай: равные веса по тем, у кого есть цена
+        fallback = [t for t in config.core_universe if as_of in histories.get(t, {})]
+        return fallback[: config.core_top_n]
     return [t for t, _ in ranked[: config.core_top_n]]
 
 
@@ -124,7 +139,7 @@ def rebalance_core_portfolio(
                 px,
                 min(delta, state.core.cash_rub * 0.99),
                 config,
-                min_trade_override=config.min_trade_rub,
+                min_trade_override=config.core_min_trade_rub,
                 tag=tag,
             )
             if r:

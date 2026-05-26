@@ -73,6 +73,8 @@ class BacktestResult:
     real_profit_rub: float
     benchmark_final: float
     benchmark_return_pct: float
+    avg_core_cash_pct: float
+    months_core_all_cash: int
     monthly: list[MonthlySnapshot] = field(default_factory=list)
 
 
@@ -117,16 +119,21 @@ def run_backtest(
     if not trading_days:
         raise RuntimeError("No trading days in range")
 
+    all_in_core = initial_capital < config.satellite_min_equity_rub
     state = PortfolioState(
-        core=SleeveState(cash_rub=initial_capital * config.core_weight),
-        satellite=SleeveState(cash_rub=initial_capital * config.satellite_weight),
+        core=SleeveState(
+            cash_rub=initial_capital if all_in_core else initial_capital * config.core_weight
+        ),
+        satellite=SleeveState(
+            cash_rub=0.0 if all_in_core else initial_capital * config.satellite_weight
+        ),
         initial_equity=initial_capital,
         peak_equity=initial_capital,
         equity_at_last_rebalance=initial_capital,
         last_rebalance_at="",
         last_scheduled_rebalance_at="",
-        satellite_month_start_equity=initial_capital * config.satellite_weight,
-        satellite_baseline_equity=initial_capital * config.satellite_weight,
+        satellite_month_start_equity=0.0 if all_in_core else initial_capital * config.satellite_weight,
+        satellite_baseline_equity=0.0 if all_in_core else initial_capital * config.satellite_weight,
         month_key=trading_days[0].strftime("%Y-%m"),
     )
 
@@ -138,6 +145,8 @@ def run_backtest(
     first_month = trading_days[0].strftime("%Y-%m")
     prev_month = first_month
     daily_monthly: list[tuple[str, float, float, float, float]] = []
+    core_cash_pcts: list[float] = []
+    months_no_positions: set[str] = set()
 
     prices0 = prices_on(histories, tickers, trading_days[0])
     if prices0:
@@ -155,11 +164,19 @@ def run_backtest(
         div_net = apply_daily_dividends(state, dividends_by_day.get(day, []), config)
         total_dividends += div_net
 
+        equity = state.total_equity(prices)
+        if equity < config.satellite_min_equity_rub and state.satellite.cash_rub > 0:
+            state.core.cash_rub += state.satellite.cash_rub
+            state.satellite.cash_rub = 0.0
+
         month = day.strftime("%Y-%m")
         if month != prev_month:
             if month != first_month:
-                state.core.cash_rub += monthly_deposit * config.core_weight
-                state.satellite.cash_rub += monthly_deposit * config.satellite_weight
+                if equity < config.satellite_min_equity_rub:
+                    state.core.cash_rub += monthly_deposit
+                else:
+                    state.core.cash_rub += monthly_deposit * config.core_weight
+                    state.satellite.cash_rub += monthly_deposit * config.satellite_weight
                 total_deposits += monthly_deposit
                 ct, cf = rebalance_core_portfolio(
                     state,
@@ -237,6 +254,10 @@ def run_backtest(
         core_eq = state.core.equity(prices)
         sat_eq = state.satellite.equity(prices)
         equity = core_eq + sat_eq
+        if core_eq > 0:
+            core_cash_pcts.append(state.core.cash_rub / core_eq * 100)
+        if not state.core.positions:
+            months_no_positions.add(month)
         contributed_so_far = initial_capital + total_deposits
         daily_monthly.append((month, equity, core_eq, sat_eq, contributed_so_far))
 
@@ -305,6 +326,8 @@ def run_backtest(
         real_profit_rub=real_profit,
         benchmark_final=bench.final_equity,
         benchmark_return_pct=bench.return_pct,
+        avg_core_cash_pct=(sum(core_cash_pcts) / len(core_cash_pcts)) if core_cash_pcts else 0.0,
+        months_core_all_cash=len(months_no_positions),
         monthly=monthly,
     )
 
@@ -381,6 +404,12 @@ def print_report(result: BacktestResult, config: Config) -> None:
         f"Trades:           {result.trades} "
         f"(core rebalance {result.core_rebalance_trades}, sat {result.satellite_trades})"
     )
+    print(
+        f"Core idle cash:   avg {result.avg_core_cash_pct:.1f}% in cash | "
+        f"{result.months_core_all_cash} months with zero stocks"
+    )
+    if result.avg_core_cash_pct > 25 or result.months_core_all_cash > 0:
+        print("  ⚠ Много простоя в кэше — проверьте CORE_MIN_TRADE_RUB и CORE_TREND_SMA")
 
     print("\n--- Monthly: total / core / satellite ---")
     print(f"{'Month':<8} {'Total':>10} {'Core':>10} {'Sat':>10} {'Trading PnL':>12}")
