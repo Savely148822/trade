@@ -45,6 +45,9 @@ class Config:
     scan_sma_tolerance_pct: float
     scan_min_news_sentiment: float
     scan_use_news: bool
+    exit_on_negative_forecast: bool
+    scan_sell_forecast_pct: float
+    exit_fee_buffer: float
     forecast_train_days: int
     forecast_min_train_samples: int
     forecast_ridge_alpha: float
@@ -91,6 +94,9 @@ class Config:
             scan_sma_tolerance_pct=float(os.getenv("SCAN_SMA_TOLERANCE_PCT", "3.0")),
             scan_min_news_sentiment=float(os.getenv("SCAN_MIN_NEWS_SENTIMENT", "0.0")),
             scan_use_news=_bool(os.getenv("SCAN_USE_NEWS"), True),
+            exit_on_negative_forecast=_bool(os.getenv("EXIT_ON_NEGATIVE_FORECAST"), True),
+            scan_sell_forecast_pct=float(os.getenv("SCAN_SELL_FORECAST_PCT", "-1.0")),
+            exit_fee_buffer=float(os.getenv("EXIT_FEE_BUFFER", "1.2")),
             forecast_train_days=int(os.getenv("FORECAST_TRAIN_DAYS", "504")),
             forecast_min_train_samples=int(os.getenv("FORECAST_MIN_TRAIN_SAMPLES", "80")),
             forecast_ridge_alpha=float(os.getenv("FORECAST_RIDGE_ALPHA", "1.0")),

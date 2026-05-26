@@ -11,6 +11,7 @@ from bot.config import Config
 from bot.data.moex_iss import fetch_history, fetch_last_price
 from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.deposits import current_month_key, process_new_month
+from bot.portfolio.forecast_exits import apply_forecast_exits
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
 
@@ -71,10 +72,19 @@ def run_cycle(config: Config) -> None:
             state, prices, histories, date.today(), config, universe=universe, tag="INIT"
         )
 
-    tickers = list(
-        set(config.core_universe) | set(state.core.positions.keys())
-    )
+    tickers = list(set(config.core_universe) | set(state.core.positions.keys()))
     prices = _collect_prices(tickers)
+
+    if state.core.positions and config.exit_on_negative_forecast:
+        held = list(state.core.positions.keys())
+        histories = _load_histories(held)
+        ex_trades, ex_fees = apply_forecast_exits(
+            state, prices, histories, config, date.today()
+        )
+        if ex_trades:
+            logger.info("Forecast exits: %d sells, fees %.0f RUB", ex_trades, ex_fees)
+            prices = _collect_prices(tickers)
+
     risk = check_risk(state, prices, config.max_drawdown_pct)
     equity = state.core.equity(prices)
 

@@ -141,6 +141,7 @@ def scan_promising_stocks(
             f"IMOEX 1m {macro.imoex_mom_1m*100:+.1f}% | USD {macro.usdrub_mom_1m*100:+.1f}% | "
             f"ставка ЦБ {macro.cbr_key_rate_pct:.1f}%"
         ),
+        min_forecast_pct=config.scan_min_forecast_pct,
     )
 
 
@@ -199,6 +200,11 @@ def print_scan_report(report: ScanReport) -> None:
         )
     if report.picks:
         print(f"\nCORE_UNIVERSE={','.join(p.ticker for p in report.picks)}")
+        if len(report.picks) < report.top_n:
+            print(
+                f"⚠ Строгий режим: только {len(report.picks)} из {report.top_n} "
+                f"(прогноз ≥ {report.min_forecast_pct:.1f}%, фильтры роста)."
+            )
     else:
         print("\n⚠ Ни одна бумага не прошла фильтры — CORE_UNIVERSE не меняем.")
     print("=" * 64 + "\n")

@@ -17,8 +17,10 @@ from bot.data.moex_iss import (
     prices_on,
 )
 from bot.data.moex_market import fetch_tqbr_market_snapshot
+from bot.data.macro import build_macro_snapshot
 from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.dividends import apply_daily_dividends
+from bot.portfolio.forecast_exits import apply_forecast_exits
 from bot.portfolio.state import PortfolioState, SleeveState
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,7 @@ class BacktestResult:
     return_on_contributed_pct: float
     max_drawdown_pct: float
     core_rebalance_trades: int
+    forecast_exit_trades: int
     total_commissions: float
     total_dividends_net: float
     inflation_drag_rub: float
@@ -107,6 +110,7 @@ def run_backtest(
     )
 
     core_trades = 0
+    exit_trades = 0
     total_deposits = 0.0
     total_commissions = 0.0
     total_dividends = 0.0
@@ -127,6 +131,19 @@ def run_backtest(
             continue
 
         total_dividends += apply_daily_dividends(state, dividends_by_day.get(day, []), config)
+
+        if state.core.positions and config.exit_on_negative_forecast:
+            et, ef = apply_forecast_exits(
+                state,
+                prices,
+                histories,
+                config,
+                day,
+                index_series=index,
+                macro=build_macro_snapshot(day, config.market_index),
+            )
+            exit_trades += et
+            total_commissions += ef
 
         month = day.strftime("%Y-%m")
         if month != prev_month:
@@ -196,6 +213,7 @@ def run_backtest(
         return_on_contributed_pct=(profit / contributed * 100) if contributed else 0,
         max_drawdown_pct=max_dd,
         core_rebalance_trades=core_trades,
+        forecast_exit_trades=exit_trades,
         total_commissions=total_commissions,
         total_dividends_net=total_dividends,
         inflation_drag_rub=inflation_drag,
@@ -232,6 +250,9 @@ def print_report(result: BacktestResult, config: Config) -> None:
     print(f"Dividends:  +{result.total_dividends_net:,.0f} | Fees −{result.total_commissions:,.0f}")
     print(f"Real (est): {result.real_profit_rub:+,.0f} RUB | Max DD {result.max_drawdown_pct:.1f}%")
     print(f"Idle cash:  avg {result.avg_core_cash_pct:.1f}%")
-    print(f"Trades:     {result.core_rebalance_trades}")
+    print(
+        f"Trades:     rebalance {result.core_rebalance_trades}"
+        f" | forecast exits {result.forecast_exit_trades}"
+    )
     print(f"CSV:        {REPORT_CSV}")
     print("=" * 72 + "\n")
