@@ -36,6 +36,7 @@ class PortfolioState:
     equity_at_last_rebalance: float
     last_rebalance_at: str
     satellite_month_start_equity: float
+    satellite_baseline_equity: float
     month_key: str
     updated_at: str = ""
 
@@ -60,6 +61,7 @@ def load_state(initial_rub: float, core_weight: float) -> PortfolioState:
         equity_at_last_rebalance=initial_rub,
         last_rebalance_at=now,
         satellite_month_start_equity=sat_cash,
+        satellite_baseline_equity=sat_cash,
         month_key=month,
         updated_at=now,
     )
@@ -91,6 +93,7 @@ def _to_dict(state: PortfolioState) -> dict:
         "equity_at_last_rebalance": state.equity_at_last_rebalance,
         "last_rebalance_at": state.last_rebalance_at,
         "satellite_month_start_equity": state.satellite_month_start_equity,
+        "satellite_baseline_equity": state.satellite_baseline_equity,
         "month_key": state.month_key,
         "updated_at": state.updated_at,
     }
@@ -119,6 +122,12 @@ def _from_dict(raw: dict, fallback_initial: float, core_weight: float) -> Portfo
         satellite_month_start_equity=float(
             raw.get(
                 "satellite_month_start_equity",
+                initial * (1 - core_weight),
+            )
+        ),
+        satellite_baseline_equity=float(
+            raw.get(
+                "satellite_baseline_equity",
                 initial * (1 - core_weight),
             )
         ),

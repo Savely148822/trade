@@ -41,6 +41,7 @@ class Config:
     satellite_index_sma_period: int
     satellite_ticker_sma_period: int
     satellite_require_close_confirm: bool
+    satellite_profit_rebalance_pct: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -92,5 +93,8 @@ class Config:
             ),
             satellite_require_close_confirm=_bool(
                 os.getenv("SATELLITE_REQUIRE_CLOSE_CONFIRM"), True
+            ),
+            satellite_profit_rebalance_pct=float(
+                os.getenv("SATELLITE_PROFIT_REBALANCE_PCT", "20")
             ),
         )

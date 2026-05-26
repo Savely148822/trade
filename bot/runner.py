@@ -6,7 +6,11 @@ from bot.config import Config
 from bot.data.market_regime import fetch_market_regime, ticker_above_sma
 from bot.data.moex_iss import fetch_daily_closes, fetch_daily_ohlc, fetch_last_price
 from bot.portfolio.executor import apply_core_signal, apply_satellite_signal
-from bot.portfolio.rebalancer import rebalance_portfolio, should_rebalance
+from bot.portfolio.rebalancer import (
+    rebalance_portfolio,
+    should_rebalance,
+    should_rebalance_satellite_profit,
+)
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
 from bot.strategies.core_momentum import CoreAction, evaluate_core
@@ -40,14 +44,33 @@ def run_cycle(config: Config) -> None:
     all_tickers = list(set(config.core_universe + config.satellite_universe))
     prices = _collect_prices(all_tickers)
 
-    if should_rebalance(state, config.rebalance_interval_sec):
-        logger.info("--- Scheduled rebalance (80/20 from total equity) ---")
-        rebalance_portfolio(
-            state,
-            prices,
-            config.core_weight,
-            config.satellite_weight,
-        )
+    profit_hit, profit_reason = should_rebalance_satellite_profit(
+        state,
+        prices,
+        config.satellite_profit_rebalance_pct,
+    )
+    scheduled = should_rebalance(state, config.rebalance_interval_sec)
+
+    if profit_hit or scheduled:
+        if profit_hit:
+            logger.info("--- Profit rebalance: %s ---", profit_reason)
+            rebalance_portfolio(
+                state,
+                prices,
+                config.core_weight,
+                config.satellite_weight,
+                full_liquidate=True,
+                trigger="satellite_profit",
+            )
+        else:
+            logger.info("--- Scheduled rebalance (80/20 from total equity) ---")
+            rebalance_portfolio(
+                state,
+                prices,
+                config.core_weight,
+                config.satellite_weight,
+                trigger="scheduled",
+            )
         prices = _collect_prices(all_tickers)
 
     risk = check_risk(
