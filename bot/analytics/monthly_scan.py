@@ -32,15 +32,15 @@ class ScanRow:
     dividend_announced_1m_pct: float
     dividend_proxy_1m_pct: float
     dividend_source: str
-    dividend_payment_count: int = 0
-    dividend_cycle_days: float | None = None
-    dividend_info_discount: float = 1.0
     momentum_6m_pct: float
     rs_vs_index_pct: float
     revenue_proxy_pct: float
     news_sentiment: float
     valtoday_mln: float
     last_price: float
+    dividend_payment_count: int = 0
+    dividend_cycle_days: float | None = None
+    dividend_info_discount: float = 1.0
 
 
 @dataclass
@@ -55,6 +55,7 @@ class ScanReport:
     strict_mode: bool = True
     macro_summary: str = ""
     min_forecast_pct: float = 1.0
+    fill_tier: str = ""
 
 
 def _liquidity_pool_from_snapshot(
@@ -110,7 +111,7 @@ def scan_promising_stocks(
     from bot.data.macro import build_macro_snapshot
 
     macro = build_macro_snapshot(as_of, config.market_index)
-    ranked = rank_with_forecast(candidates, index_series, as_of, config, weights=weights)
+    ranked, fill_tier = rank_with_forecast(candidates, index_series, as_of, config, weights=weights)
 
     picks = [
         ScanRow(
@@ -158,6 +159,7 @@ def scan_promising_stocks(
             f"ставка ЦБ {macro.cbr_key_rate_pct:.1f}%"
         ),
         min_forecast_pct=config.scan_min_forecast_pct,
+        fill_tier=fill_tier,
     )
 
 
@@ -172,6 +174,7 @@ def save_scan_report(report: ScanReport) -> Path:
                 "candidates_screened": report.candidates_screened,
                 "passed_filters": report.passed_filters,
                 "model_train_samples": report.model_samples,
+                "fill_tier": report.fill_tier,
                 "top_n": report.top_n,
                 "picks": [asdict(p) for p in report.picks],
             },
@@ -184,6 +187,7 @@ def save_scan_report(report: ScanReport) -> Path:
         f"MOEX GROWTH SCAN {report.month} (as of {report.as_of})",
         f"Pool: {report.candidates_screened} | Passed forecast+filters: {report.passed_filters}",
         f"Forecast model trained on {report.model_samples} samples",
+        f"Fill tier: {report.fill_tier or 'n/a'}",
         "",
         f"{'#':>3} {'Tkr':<6} {'Tot%':>6} {'Px%':>6} {'Div%':>5} {'MOEX':>5} {'Prx%':>5} {'Mom6m':>7} {'IMOEX':>7} {'Sc':>6}",
         "-" * 72,
@@ -206,7 +210,7 @@ def print_scan_report(report: ScanReport) -> None:
     print("Прогноз ~1 мес: цена + дивиденды (MOEX или прокси 12м) + макро + новости")
     mode = "СТРОГИЙ" if report.strict_mode else "обычный"
     print(f"Режим: {mode} | в рейтинг: {report.passed_filters} из {report.candidates_screened}")
-    print(f"Обучение модели: {report.model_samples} наблюдений\n")
+    print(f"Обучение модели: {report.model_samples} наблюдений | fill: {report.fill_tier or 'n/a'}\n")
     if report.macro_summary:
         print(f"Макро: {report.macro_summary}\n")
     for p in report.picks:

@@ -59,6 +59,29 @@ def select_core_holdings(
     universe: list[str] | None = None,
 ) -> list[str]:
     tickers = universe if universe is not None else config.core_universe
+    if not tickers:
+        return []
+
+    if config.core_select_scan_order and universe:
+        sma = config.core_trend_sma if config.core_trend_sma > 0 else None
+        picked: list[str] = []
+        for t in tickers:
+            if as_of not in histories.get(t, {}):
+                continue
+            if sma:
+                closes = closes_before(histories[t], as_of, sma + 5)
+                if len(closes) >= sma:
+                    s = sum(closes[-sma:]) / sma
+                    if closes[-1] < s * (1 - config.scan_sma_tolerance_pct / 100.0):
+                        continue
+            picked.append(t)
+            if len(picked) >= config.core_top_n:
+                break
+        if picked:
+            logger.info("Core: top-%d by scan order → %s", config.core_top_n, ",".join(picked))
+            return picked
+        logger.info("Core: scan order empty — fallback to momentum rank")
+
     sma = config.core_trend_sma if config.core_trend_sma > 0 else None
     ranked = rank_by_momentum(
         histories,

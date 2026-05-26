@@ -27,12 +27,15 @@ class Config:
     monthly_deposit_rub: float
     core_momentum_months: int
     core_top_n: int
+    core_select_scan_order: bool
     core_trend_sma: int
     core_vol_lookback: int
     core_universe: list[str]
     scan_top_n: int
     scan_liquid_pool: int
     scan_min_forecast_pct: float
+    scan_adaptive_fill: bool
+    scan_min_universe: int
     scan_min_avg_turnover_rub: float
     scan_min_price_rub: float
     scan_max_vol_annual: float
@@ -77,6 +80,7 @@ class Config:
             monthly_deposit_rub=float(os.getenv("MONTHLY_DEPOSIT_RUB", "2000")),
             core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
             core_top_n=int(os.getenv("CORE_TOP_N", "5")),
+            core_select_scan_order=_bool(os.getenv("CORE_SELECT_SCAN_ORDER"), True),
             core_trend_sma=int(os.getenv("CORE_TREND_SMA", "0")),
             core_vol_lookback=int(os.getenv("CORE_VOL_LOOKBACK", "20")),
             core_universe=_list(
@@ -85,7 +89,9 @@ class Config:
             ),
             scan_top_n=int(os.getenv("SCAN_TOP_N", "20")),
             scan_liquid_pool=int(os.getenv("SCAN_LIQUID_POOL", "100")),
-            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "1.0")),
+            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "0.5")),
+            scan_adaptive_fill=_bool(os.getenv("SCAN_ADAPTIVE_FILL"), True),
+            scan_min_universe=int(os.getenv("SCAN_MIN_UNIVERSE", "10")),
             scan_min_avg_turnover_rub=float(
                 os.getenv("SCAN_MIN_AVG_TURNOVER_RUB", "20_000_000").replace("_", "")
             ),

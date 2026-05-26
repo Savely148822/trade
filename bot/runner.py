@@ -13,6 +13,7 @@ from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.deposits import current_month_key, process_new_month
 from bot.portfolio.dividends import process_dividends_through
 from bot.portfolio.forecast_exits import apply_forecast_exits
+from bot.portfolio.paper_status import log_paper_status
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
 
@@ -95,11 +96,11 @@ def run_cycle(config: Config) -> None:
     risk = check_risk(state, prices, config.max_drawdown_pct)
     equity = state.core.equity(prices)
 
+    log_paper_status(state, prices, config)
     logger.info(
-        "=== [%s] equity=%.0f RUB | div +%.0f | DD=%.1f%% | universe %d | %s ===",
+        "=== [%s] equity=%.0f RUB | DD=%.1f%% | universe %d | %s ===",
         mode,
         equity,
-        state.total_dividends_net_rub,
         risk.drawdown_pct,
         len(config.core_universe),
         risk.message,

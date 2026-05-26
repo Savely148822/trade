@@ -395,11 +395,15 @@ def _build_forecast_results(
     config: Config,
     as_of: date,
     div_events: dict[str, list] | None = None,
+    *,
+    min_forecast_pct: float | None = None,
+    require_positive: bool | None = None,
 ) -> list[ForecastResult]:
     results: list[ForecastResult] = []
     max_turn = max((f.avg_turnover_rub for f in feats_map.values()), default=0.0)
-    min_fc = config.scan_min_forecast_pct
-    if config.scan_strict_only and min_fc <= 0:
+    min_fc = config.scan_min_forecast_pct if min_forecast_pct is None else min_forecast_pct
+    req_pos = config.scan_strict_only if require_positive is None else require_positive
+    if req_pos and min_fc <= 0:
         min_fc = 0.01
 
     for ticker, feat in feats_map.items():
@@ -414,7 +418,7 @@ def _build_forecast_results(
         forecast = adjusted_total_return_pct(price_fc, div_fc, config)
         if min_fc > 0 and forecast < min_fc:
             continue
-        if config.scan_strict_only and forecast <= 0:
+        if req_pos and forecast <= 0:
             continue
         liq = feat.avg_turnover_rub / max_turn if max_turn else 0
         fund, news = meta.get(ticker, (None, None))
@@ -447,6 +451,40 @@ def _build_forecast_results(
     return results
 
 
+def _preload_div_events(
+    tickers: list[str],
+    as_of: date,
+    config: Config,
+) -> dict[str, list] | None:
+    if not config.include_dividends or not tickers:
+        return None
+    div_start, div_end = dividend_preload_range(as_of, config)
+    return preload_dividends(tickers, div_start, div_end)
+
+
+def _rank_from_feats(
+    feats_map: dict[str, StockFeatures],
+    meta: dict[str, tuple[FundamentalSnapshot | None, NewsSentiment | None]],
+    weights: list[float],
+    config: Config,
+    as_of: date,
+    *,
+    min_forecast_pct: float | None = None,
+    require_positive: bool | None = None,
+) -> list[ForecastResult]:
+    div_events = _preload_div_events(list(feats_map.keys()), as_of, config)
+    return _build_forecast_results(
+        feats_map,
+        meta,
+        weights,
+        config,
+        as_of,
+        div_events,
+        min_forecast_pct=min_forecast_pct,
+        require_positive=require_positive,
+    )
+
+
 def rank_with_forecast(
     candidates: list[tuple[str, dict[date, OhlcBar]]],
     index_series: dict[date, float],
@@ -454,7 +492,7 @@ def rank_with_forecast(
     config: Config,
     *,
     weights: list[float] | None = None,
-) -> list[ForecastResult]:
+) -> tuple[list[ForecastResult], str]:
     w = weights or load_model_weights() or _default_weights()
     macro = build_macro_snapshot(as_of, config.market_index)
     news_cache = None
@@ -492,29 +530,59 @@ def rank_with_forecast(
         meta[ticker] = (fund, news)
         if passes_strict_filters(feat, config, fund, news)[0]:
             strict_map[ticker] = feat
-        elif not config.scan_strict_only and passes_relaxed_filters(feat, config)[0]:
+        if passes_relaxed_filters(feat, config)[0]:
             relaxed_map[ticker] = feat
 
-    feats_map = strict_map
-    div_start, div_end = dividend_preload_range(as_of, config)
-    div_events = (
-        preload_dividends(list(feats_map.keys()), div_start, div_end)
-        if config.include_dividends and feats_map
-        else None
-    )
-    results = _build_forecast_results(feats_map, meta, w, config, as_of, div_events)
-    if (
-        not config.scan_strict_only
-        and len(results) < config.scan_top_n
-        and relaxed_map
-    ):
-        for t, f in relaxed_map.items():
-            if t not in feats_map:
-                feats_map[t] = f
-        div_events = (
-            preload_dividends(list(feats_map.keys()), div_start, div_end)
-            if config.include_dividends
-            else None
+    target = min(config.scan_top_n, config.scan_min_universe) if config.scan_adaptive_fill else config.scan_top_n
+
+    if not config.scan_adaptive_fill:
+        feats_map = strict_map if config.scan_strict_only else {**relaxed_map, **strict_map}
+        if not config.scan_strict_only and len(strict_map) < config.scan_top_n:
+            for t, f in relaxed_map.items():
+                if t not in feats_map:
+                    feats_map[t] = f
+        return _rank_from_feats(
+            strict_map if config.scan_strict_only else feats_map,
+            meta,
+            w,
+            config,
+            as_of,
+            min_forecast_pct=config.scan_min_forecast_pct,
+            require_positive=config.scan_strict_only,
+        ), "strict" if config.scan_strict_only else "relaxed"
+
+    attempts: list[tuple[str, dict[str, StockFeatures], float | None, bool | None]] = [
+        ("strict", strict_map, config.scan_min_forecast_pct, True),
+        ("strict-soft", strict_map, max(config.scan_min_forecast_pct * 0.5, 0.0), True),
+        ("strict-positive", strict_map, 0.0, True),
+        ("liquid-positive", {**relaxed_map, **strict_map}, 0.0, True),
+        ("liquid-top", {**relaxed_map, **strict_map}, 0.0, False),
+    ]
+    best: list[ForecastResult] = []
+    fill_tier = "empty"
+    for tier_name, feats_map, min_fc, req_pos in attempts:
+        if not feats_map:
+            continue
+        ranked = _rank_from_feats(
+            feats_map,
+            meta,
+            w,
+            config,
+            as_of,
+            min_forecast_pct=min_fc,
+            require_positive=req_pos,
         )
-        results = _build_forecast_results(feats_map, meta, w, config, as_of, div_events)
-    return results
+        if len(ranked) > len(best):
+            best = ranked
+            fill_tier = tier_name
+        if len(best) >= target:
+            break
+
+    if best:
+        logger.info(
+            "Scan adaptive fill: tier=%s → %d names (target %d)",
+            fill_tier,
+            len(best),
+            target,
+        )
+    return best, fill_tier
