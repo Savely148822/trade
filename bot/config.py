@@ -60,6 +60,8 @@ class Config:
     core_min_trade_rub: float
     include_dividends: bool
     dividend_tax_pct: float
+    dividend_use_proxy: bool
+    dividend_proxy_months: int
     inflation_annual_pct: float
 
     @classmethod
@@ -109,5 +111,7 @@ class Config:
             core_min_trade_rub=float(os.getenv("CORE_MIN_TRADE_RUB", "500")),
             include_dividends=_bool(os.getenv("INCLUDE_DIVIDENDS"), True),
             dividend_tax_pct=float(os.getenv("DIVIDEND_TAX_PCT", "13")),
+            dividend_use_proxy=_bool(os.getenv("DIVIDEND_USE_PROXY"), True),
+            dividend_proxy_months=int(os.getenv("DIVIDEND_PROXY_MONTHS", "12")),
             inflation_annual_pct=float(os.getenv("INFLATION_ANNUAL_PCT", "8")),
         )

@@ -12,7 +12,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from bot.analytics.total_return import (
-    expected_dividend_pct_1m,
+    dividend_preload_range,
+    forecast_dividend_pct_1m,
     preload_dividends,
     total_return_pct,
 )
@@ -54,6 +55,9 @@ class ForecastResult:
     forecast_1m_pct: float
     price_forecast_1m_pct: float
     dividend_forecast_1m_pct: float
+    dividend_announced_1m_pct: float
+    dividend_proxy_1m_pct: float
+    dividend_source: str
     features: StockFeatures
     fundamentals: FundamentalSnapshot | None
     news: NewsSentiment | None
@@ -397,31 +401,35 @@ def _build_forecast_results(
 
     for ticker, feat in feats_map.items():
         price_fc = predict_return(feat, weights) * 100
-        div_fc = (
-            expected_dividend_pct_1m(
-                ticker,
-                feat.last_price,
-                as_of,
-                config,
-                events=div_events.get(ticker) if div_events else None,
-            )
-            if config.include_dividends
-            else 0.0
+        div_fc = forecast_dividend_pct_1m(
+            ticker,
+            feat.last_price,
+            as_of,
+            config,
+            events=div_events.get(ticker) if div_events else None,
         )
-        forecast = total_return_pct(price_fc, div_fc)
+        forecast = total_return_pct(price_fc, div_fc.total_pct)
         if min_fc > 0 and forecast < min_fc:
             continue
         if config.scan_strict_only and forecast <= 0:
             continue
         liq = feat.avg_turnover_rub / max_turn if max_turn else 0
         fund, news = meta.get(ticker, (None, None))
-        composite = forecast * 0.75 + liq * 100 * 0.10 + feat.news_sentiment * 10 + div_fc * 0.10
+        composite = (
+            forecast * 0.75
+            + liq * 100 * 0.10
+            + feat.news_sentiment * 10
+            + div_fc.total_pct * 0.10
+        )
         results.append(
             ForecastResult(
                 ticker=ticker,
                 forecast_1m_pct=round(forecast, 2),
                 price_forecast_1m_pct=round(price_fc, 2),
-                dividend_forecast_1m_pct=round(div_fc, 2),
+                dividend_forecast_1m_pct=round(div_fc.total_pct, 2),
+                dividend_announced_1m_pct=round(div_fc.announced_pct, 2),
+                dividend_proxy_1m_pct=round(div_fc.proxy_pct, 2),
+                dividend_source=div_fc.source,
                 features=feat,
                 fundamentals=fund,
                 news=news,
@@ -482,12 +490,9 @@ def rank_with_forecast(
             relaxed_map[ticker] = feat
 
     feats_map = strict_map
+    div_start, div_end = dividend_preload_range(as_of, config)
     div_events = (
-        preload_dividends(
-            list(feats_map.keys()),
-            as_of,
-            as_of + timedelta(days=FORWARD_DAYS + 30),
-        )
+        preload_dividends(list(feats_map.keys()), div_start, div_end)
         if config.include_dividends and feats_map
         else None
     )
@@ -501,11 +506,7 @@ def rank_with_forecast(
             if t not in feats_map:
                 feats_map[t] = f
         div_events = (
-            preload_dividends(
-                list(feats_map.keys()),
-                as_of,
-                as_of + timedelta(days=FORWARD_DAYS + 30),
-            )
+            preload_dividends(list(feats_map.keys()), div_start, div_end)
             if config.include_dividends
             else None
         )
