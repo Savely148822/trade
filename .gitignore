@@ -5,4 +5,4 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
-state.json
+data/portfolio_state.json

@@ -12,43 +12,65 @@ def _bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _list(value: str | None, default: str) -> list[str]:
+    raw = value if value else default
+    return [t.strip().upper() for t in raw.split(",") if t.strip()]
+
+
 @dataclass(frozen=True)
 class Config:
-    exchange_id: str
-    api_key: str
-    api_secret: str
     paper_trading: bool
-    symbol: str
-    timeframe: str
-    fast_ma_period: int
-    slow_ma_period: int
-    trade_size_ratio: float
+    finam_token: str
+    core_weight: float
+    satellite_weight: float
+    paper_initial_rub: float
+    core_ma_fast: int
+    core_ma_slow: int
+    core_momentum_months: int
+    core_universe: list[str]
+    satellite_universe: list[str]
+    satellite_breakout_bars: int
+    satellite_atr_period: int
+    max_drawdown_pct: float
+    satellite_monthly_loss_cap_pct: float
+    min_daily_volume_rub: float
     poll_interval_sec: int
-    paper_usdt_balance: float
-    paper_base_balance: float
 
     @classmethod
     def from_env(cls) -> "Config":
-        fast = int(os.getenv("FAST_MA_PERIOD", "9"))
-        slow = int(os.getenv("SLOW_MA_PERIOD", "21"))
-        if fast >= slow:
-            raise ValueError("FAST_MA_PERIOD must be less than SLOW_MA_PERIOD")
+        core_w = float(os.getenv("CORE_WEIGHT", "0.8"))
+        sat_w = float(os.getenv("SATELLITE_WEIGHT", "0.2"))
+        if abs(core_w + sat_w - 1.0) > 0.01:
+            raise ValueError("CORE_WEIGHT + SATELLITE_WEIGHT must equal 1.0")
 
-        ratio = float(os.getenv("TRADE_SIZE_RATIO", "0.95"))
-        if not 0 < ratio <= 1:
-            raise ValueError("TRADE_SIZE_RATIO must be between 0 and 1")
+        fast = int(os.getenv("CORE_MA_FAST", "50"))
+        slow = int(os.getenv("CORE_MA_SLOW", "200"))
+        if fast >= slow:
+            raise ValueError("CORE_MA_FAST must be less than CORE_MA_SLOW")
 
         return cls(
-            exchange_id=os.getenv("EXCHANGE_ID", "binance").lower(),
-            api_key=os.getenv("API_KEY", ""),
-            api_secret=os.getenv("API_SECRET", ""),
             paper_trading=_bool(os.getenv("PAPER_TRADING"), True),
-            symbol=os.getenv("SYMBOL", "BTC/USDT"),
-            timeframe=os.getenv("TIMEFRAME", "1h"),
-            fast_ma_period=fast,
-            slow_ma_period=slow,
-            trade_size_ratio=ratio,
-            poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "60")),
-            paper_usdt_balance=float(os.getenv("PAPER_USDT_BALANCE", "10000")),
-            paper_base_balance=float(os.getenv("PAPER_BASE_BALANCE", "0")),
+            finam_token=os.getenv("FINAM_TOKEN", ""),
+            core_weight=core_w,
+            satellite_weight=sat_w,
+            paper_initial_rub=float(os.getenv("PAPER_INITIAL_RUB", "1000000")),
+            core_ma_fast=fast,
+            core_ma_slow=slow,
+            core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
+            core_universe=_list(
+                os.getenv("CORE_UNIVERSE"),
+                "SBMX,TMOS,TRUR,SBGB,LQDT,SBER,LKOH,GAZP",
+            ),
+            satellite_universe=_list(
+                os.getenv("SATELLITE_UNIVERSE"),
+                "VTBR,AFKS,MTSS",
+            ),
+            satellite_breakout_bars=int(os.getenv("SATELLITE_BREAKOUT_BARS", "20")),
+            satellite_atr_period=int(os.getenv("SATELLITE_ATR_PERIOD", "14")),
+            max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "20")),
+            satellite_monthly_loss_cap_pct=float(
+                os.getenv("SATELLITE_MONTHLY_LOSS_CAP_PCT", "10")
+            ),
+            min_daily_volume_rub=float(os.getenv("MIN_DAILY_VOLUME_RUB", "5000000")),
+            poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "300")),
         )
