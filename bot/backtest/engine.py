@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 from bot.config import Config
 from bot.data.moex_iss import (
@@ -28,6 +30,21 @@ from bot.strategies.satellite_breakout import SatelliteAction, evaluate_satellit
 
 logger = logging.getLogger(__name__)
 
+REPORT_CSV = Path("data/backtest_report.csv")
+
+
+@dataclass
+class MonthlySnapshot:
+    month: str
+    total_equity: float
+    core_equity: float
+    satellite_equity: float
+    deposits_cumulative: float
+    contributed_cumulative: float
+    trading_pnl: float  # total - contributed
+    core_pct: float
+    satellite_pct: float
+
 
 @dataclass
 class BacktestResult:
@@ -37,11 +54,17 @@ class BacktestResult:
     total_deposits: float
     total_contributed: float
     final_equity: float
+    final_core: float
+    final_satellite: float
     profit_rub: float
+    core_profit_rub: float
+    satellite_profit_rub: float
     return_on_contributed_pct: float
     max_drawdown_pct: float
     trades: int
-    monthly_snapshots: list[tuple[str, float, float]] = field(default_factory=list)
+    core_trades: int
+    satellite_trades: int
+    monthly: list[MonthlySnapshot] = field(default_factory=list)
 
 
 def _index_regime_ok(index: dict[date, float], day: date, period: int) -> bool:
@@ -94,11 +117,11 @@ def run_backtest(
         month_key=trading_days[0].strftime("%Y-%m"),
     )
 
-    trades = 0
+    trades = core_trades = sat_trades = 0
     total_deposits = 0.0
     max_dd = 0.0
     prev_month = trading_days[0].strftime("%Y-%m")
-    monthly_snapshots: list[tuple[str, float, float]] = []
+    daily_monthly: list[tuple[str, float, float, float, float]] = []
 
     for day in trading_days:
         prices = prices_on(histories, tickers, day)
@@ -156,12 +179,14 @@ def run_backtest(
                 if sig.action in (CoreAction.SELL, CoreAction.TRIM):
                     if apply_core_signal(state, sig):
                         trades += 1
+                        core_trades += 1
 
         buy_candidates = [s for s in core_signals if s.action == CoreAction.BUY]
         if buy_candidates:
             best = max(buy_candidates, key=lambda s: s.score)
             if apply_core_signal(state, best):
                 trades += 1
+                core_trades += 1
 
         allow_sat = risk.allow_satellite and _index_regime_ok(
             index, day, config.satellite_index_sma_period
@@ -195,21 +220,47 @@ def run_backtest(
                 if sig and sig.action != SatelliteAction.HOLD:
                     if apply_satellite_signal(state, sig):
                         trades += 1
+                        sat_trades += 1
 
         prices = prices_on(histories, tickers, day)
-        equity = state.total_equity(prices)
-        monthly_snapshots.append((month, equity, total_deposits))
+        core_eq = state.core.equity(prices)
+        sat_eq = state.satellite.equity(prices)
+        equity = core_eq + sat_eq
+        contributed_so_far = initial_capital + total_deposits
+        daily_monthly.append((month, equity, core_eq, sat_eq, contributed_so_far))
 
     prices = prices_on(histories, tickers, trading_days[-1])
-    final = state.total_equity(prices)
+    final_core = state.core.equity(prices)
+    final_sat = state.satellite.equity(prices)
+    final = final_core + final_sat
     contributed = initial_capital + total_deposits
     profit = final - contributed
 
-    # dedupe monthly last per month
-    by_month: dict[str, tuple[float, float]] = {}
-    for m, eq, dep in monthly_snapshots:
-        by_month[m] = (eq, dep)
-    snaps = [(m, eq, dep) for m, (eq, dep) in sorted(by_month.items())]
+    core_contributed = initial_capital * config.core_weight + total_deposits * config.core_weight
+    sat_contributed = initial_capital * config.satellite_weight + total_deposits * config.satellite_weight
+    core_profit = final_core - core_contributed
+    sat_profit = final_sat - sat_contributed
+
+    by_month: dict[str, tuple[float, float, float, float]] = {}
+    for m, eq, c, s, contrib in daily_monthly:
+        by_month[m] = (eq, c, s, contrib)
+
+    monthly: list[MonthlySnapshot] = []
+    for m in sorted(by_month.keys()):
+        eq, c, s, contrib = by_month[m]
+        monthly.append(
+            MonthlySnapshot(
+                month=m,
+                total_equity=eq,
+                core_equity=c,
+                satellite_equity=s,
+                deposits_cumulative=contrib - initial_capital,
+                contributed_cumulative=contrib,
+                trading_pnl=eq - contrib,
+                core_pct=(c / eq * 100) if eq else 0,
+                satellite_pct=(s / eq * 100) if eq else 0,
+            )
+        )
 
     return BacktestResult(
         start=trading_days[0],
@@ -218,28 +269,100 @@ def run_backtest(
         total_deposits=total_deposits,
         total_contributed=contributed,
         final_equity=final,
+        final_core=final_core,
+        final_satellite=final_sat,
         profit_rub=profit,
+        core_profit_rub=core_profit,
+        satellite_profit_rub=sat_profit,
         return_on_contributed_pct=(profit / contributed * 100) if contributed else 0,
         max_drawdown_pct=max_dd,
         trades=trades,
-        monthly_snapshots=snaps,
+        core_trades=core_trades,
+        satellite_trades=sat_trades,
+        monthly=monthly,
     )
 
 
+def _ascii_bar(value: float, max_value: float, width: int = 36) -> str:
+    if max_value <= 0:
+        return ""
+    filled = int(round(value / max_value * width))
+    return "█" * filled + "░" * (width - filled)
+
+
+def save_report_csv(result: BacktestResult, path: Path = REPORT_CSV) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "month",
+                "total_rub",
+                "core_rub",
+                "satellite_rub",
+                "core_pct",
+                "satellite_pct",
+                "deposits_cumulative",
+                "contributed_cumulative",
+                "trading_pnl",
+            ]
+        )
+        for row in result.monthly:
+            w.writerow(
+                [
+                    row.month,
+                    round(row.total_equity, 2),
+                    round(row.core_equity, 2),
+                    round(row.satellite_equity, 2),
+                    round(row.core_pct, 1),
+                    round(row.satellite_pct, 1),
+                    round(row.deposits_cumulative, 2),
+                    round(row.contributed_cumulative, 2),
+                    round(row.trading_pnl, 2),
+                ]
+            )
+
+
 def print_report(result: BacktestResult) -> None:
-    print("\n" + "=" * 60)
+    save_report_csv(result)
+
+    print("\n" + "=" * 72)
     print("BACKTEST REPORT (MOEX ISS, paper rules)")
-    print("=" * 60)
+    print("=" * 72)
     print(f"Period:        {result.start} → {result.end}")
     print(f"Start capital: {result.initial_capital:,.0f} RUB")
     print(f"Deposits:      {result.total_deposits:,.0f} RUB (monthly top-ups)")
     print(f"Contributed:   {result.total_contributed:,.0f} RUB")
     print(f"Final equity:  {result.final_equity:,.0f} RUB")
-    print(f"Profit:        {result.profit_rub:+,.0f} RUB")
-    print(f"Return:        {result.return_on_contributed_pct:+.2f}% on contributed")
+    print(f"  Core:        {result.final_core:,.0f} RUB ({result.final_core/result.final_equity*100:.1f}%)")
+    print(f"  Satellite:   {result.final_satellite:,.0f} RUB ({result.final_satellite/result.final_equity*100:.1f}%)")
+    print(f"Profit total:  {result.profit_rub:+,.0f} RUB ({result.return_on_contributed_pct:+.2f}% on contributed)")
+    print(f"  Core PnL:    {result.core_profit_rub:+,.0f} RUB")
+    print(f"  Satellite:   {result.satellite_profit_rub:+,.0f} RUB")
     print(f"Max drawdown:  {result.max_drawdown_pct:.1f}%")
-    print(f"Trades:        {result.trades}")
-    print("\nEnd of month:")
-    for month, eq, dep in result.monthly_snapshots:
-        print(f"  {month}  equity={eq:,.0f} RUB  (deposits so far {dep:,.0f})")
-    print("=" * 60 + "\n")
+    print(f"Trades:        {result.trades} (core {result.core_trades}, satellite {result.satellite_trades})")
+
+    print("\n--- Monthly: total / core / satellite ---")
+    print(f"{'Month':<8} {'Total':>10} {'Core':>10} {'Sat':>10} {'C%':>5} {'S%':>5} {'Trading PnL':>12}")
+    print("-" * 72)
+    for row in result.monthly:
+        print(
+            f"{row.month:<8} {row.total_equity:>10,.0f} {row.core_equity:>10,.0f} "
+            f"{row.satellite_equity:>10,.0f} {row.core_pct:>4.0f}% {row.satellite_pct:>4.0f}% "
+            f"{row.trading_pnl:>+12,.0f}"
+        )
+
+    totals = [r.total_equity for r in result.monthly]
+    max_eq = max(totals) if totals else 1
+    print("\n--- Equity chart (total, end of month) ---")
+    for row in result.monthly:
+        bar = _ascii_bar(row.total_equity, max_eq)
+        print(f"  {row.month}  {bar}  {row.total_equity:,.0f}")
+
+    print("\n--- Satellite share % (end of month) ---")
+    for row in result.monthly:
+        bar = _ascii_bar(row.satellite_pct, 100, width=20)
+        print(f"  {row.month}  {bar}  {row.satellite_pct:.0f}%")
+
+    print(f"\nCSV saved: {REPORT_CSV}")
+    print("=" * 72 + "\n")

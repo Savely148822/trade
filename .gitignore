@@ -7,3 +7,4 @@ venv/
 .pytest_cache/
 data/portfolio_state.json
 data/moex_cache/
+data/backtest_report.csv

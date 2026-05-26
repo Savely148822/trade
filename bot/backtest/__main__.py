@@ -29,6 +29,7 @@ def main() -> None:
 
     result = run_backtest(config, start, end, initial, monthly)
     print_report(result)
+    print("Open data/backtest_report.csv in Excel/Sheets for charts.")
 
 
 if __name__ == "__main__":
