@@ -1,65 +1,37 @@
-# Trade — движок приращения капитала (РФ)
+# Trade — core-only движок (MOEX)
 
-Бот для роста капитала: **~80% core** (свой портфель акций MOEX), **~20% satellite** (импульс). Без БПИФ: core собирается из ликвидных акций по **cross-sectional momentum** и весам **1/σ**.
+**100% капитала в core** — без satellite. Раз в месяц:
 
-Данные и paper: **MOEX ISS**. Брокер live: **Финам** (фаза 2).
+1. **Скан всей биржи** (акции TQBR) → топ-20 по momentum + ликвидность  
+2. **Обновление `.env`** (`CORE_UNIVERSE`)  
+3. **Пополнение** + ребаланс: из 20 держим **топ-5** с весами 1/σ  
 
-## План
-
-[docs/ACTION_PLAN.md](docs/ACTION_PLAN.md)
-
-## Быстрый старт
+## Команды
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
+
+# Разовый / ручной месячный скан
+python3 -m bot.scan
+
+# Paper-бот (скан автоматически в новом месяце)
 python3 -m bot
-```
 
-## Бэктест
-
-```bash
+# Бэктест (walk-forward: скан на каждый месяц по истории)
 python3 -m bot.backtest
 ```
 
-По умолчанию ~2 года, 10 000 ₽ старт + 2 000 ₽/мес. В отчёте: дивиденды (нетто), комиссии, бенчмарк equal-weight по всему core-universe.
+Отчёты скана: `data/scans/scan_YYYY-MM.json` и `.txt`.
 
-### Дивиденды и доходность цены
+## Скоринг скана
 
-| Что учитывается | Как |
-|-----------------|-----|
-| Рост цены акций | Дневные **close** MOEX ISS |
-| Дивиденды | `INCLUDE_DIVIDENDS=true`: выплаты по **дате отсечки** (registryclosedate), на кол-во акций в портфеле |
-| Налог на дивы | `DIVIDEND_TAX_PCT` (по умолчанию 13%) |
-| Комиссии | `COMMISSION_PCT` с оборота |
-| Реинвест дивов | Зачисление в кэш рукава (core/sat), дальше в ежемесячный ребаланс |
+- Пул: топ-100 по обороту за день (≥ `MIN_DAILY_VOLUME_RUB`)
+- Score: **70%** доходность за 6 мес + **30%** ликвидность
+- БПИФ/ETF отфильтрованы
 
-**Не учитывается:** отсечка ≠ дата выплаты на счёт (упрощение), НДФЛ с продаж, купоны (только акции), корпоративные сплиты (редко — можно добавить).
+## Дивиденды
 
-Цены **не total return** — без дивидендов котировка занижает long-only доходность; с `INCLUDE_DIVIDENDS` картина ближе к реальности.
-
-## Core-логика
-
-1. Раз в месяц (после пополнения): ранжирование universe по доходности за `CORE_MOMENTUM_MONTHS` месяцев.
-2. Фильтр: цена выше `CORE_TREND_SMA` (200).
-3. Держим топ `CORE_TOP_N`, веса ∝ 1/volatility (`CORE_VOL_LOOKBACK`).
-4. Продажа бумаг вне топа, подгонка весов.
-
-## Satellite
-
-Пробой + RVOL, IMOEX > SMA(20), тикер > SMA(50), equity ≥ `SATELLITE_MIN_EQUITY_RUB`.
-
-## Архитектура
-
-```
-bot/
-  strategies/cross_sectional.py
-  portfolio/core_portfolio.py
-  portfolio/dividends.py
-  data/moex_iss.py
-  data/moex_dividends.py
-  analytics/benchmark.py
-  backtest/engine.py
-```
+В бэктесте: дата отсечки MOEX ISS, налог `DIVIDEND_TAX_PCT`. Цены — close (не total return).
 
 Не является инвестиционной рекомендацией.

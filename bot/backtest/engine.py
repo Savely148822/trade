@@ -1,4 +1,4 @@
-"""Симуляция стратегии на исторических данных MOEX."""
+"""Симуляция core-only: ежемесячный скан MOEX + портфель top-N."""
 
 from __future__ import annotations
 
@@ -6,32 +6,24 @@ import csv
 import logging
 from dataclasses import dataclass, field
 from datetime import date
-from pathlib import Path
 
-from bot.analytics.benchmark import run_equal_weight_benchmark
+from bot.analytics.monthly_scan import scan_promising_stocks
 from bot.config import Config
 from bot.data.moex_dividends import load_dividends_by_day
 from bot.data.moex_iss import (
     OhlcBar,
-    closes_before,
     fetch_history,
     fetch_index_history,
-    ohlc_before,
     prices_on,
 )
+from bot.data.moex_market import fetch_tqbr_market_snapshot
 from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.dividends import apply_daily_dividends
-from bot.portfolio.executor import apply_satellite_signal
-from bot.portfolio.rebalancer import (
-    rebalance_portfolio,
-    rebalance_satellite_profit_trim,
-    should_rebalance_satellite_profit,
-)
 from bot.portfolio.state import PortfolioState, SleeveState
-from bot.risk.manager import check_risk
-from bot.strategies.satellite_breakout import SatelliteAction, evaluate_satellite
 
 logger = logging.getLogger(__name__)
+
+from pathlib import Path
 
 REPORT_CSV = Path("data/backtest_report.csv")
 
@@ -40,13 +32,9 @@ REPORT_CSV = Path("data/backtest_report.csv")
 class MonthlySnapshot:
     month: str
     total_equity: float
-    core_equity: float
-    satellite_equity: float
-    deposits_cumulative: float
+    universe: str
     contributed_cumulative: float
     trading_pnl: float
-    core_pct: float
-    satellite_pct: float
 
 
 @dataclass
@@ -57,41 +45,27 @@ class BacktestResult:
     total_deposits: float
     total_contributed: float
     final_equity: float
-    final_core: float
-    final_satellite: float
     profit_rub: float
-    core_profit_rub: float
-    satellite_profit_rub: float
     return_on_contributed_pct: float
     max_drawdown_pct: float
-    trades: int
     core_rebalance_trades: int
-    satellite_trades: int
     total_commissions: float
     total_dividends_net: float
     inflation_drag_rub: float
     real_profit_rub: float
-    benchmark_final: float
-    benchmark_return_pct: float
     avg_core_cash_pct: float
-    months_core_all_cash: int
     monthly: list[MonthlySnapshot] = field(default_factory=list)
 
 
-def _index_regime_ok(index: dict[date, float], day: date, period: int) -> bool:
-    closes = [index[d] for d in sorted(index) if d <= day]
-    if len(closes) < period:
-        return False
-    sma = sum(closes[-period:]) / period
-    return closes[-1] > sma
-
-
-def _ticker_above_sma(series: dict[date, OhlcBar], day: date, period: int) -> bool:
-    closes = closes_before(series, day, period + 1)
-    if len(closes) < period:
-        return False
-    sma = sum(closes[-period:]) / period
-    return closes[-1] > sma
+def _preload_histories(
+    tickers: list[str], start: date, end: date
+) -> dict[str, dict[date, OhlcBar]]:
+    histories: dict[str, dict[date, OhlcBar]] = {}
+    for t in tickers:
+        h = fetch_history(t, start, end)
+        if len(h) > 60:
+            histories[t] = h
+    return histories
 
 
 def run_backtest(
@@ -101,207 +75,115 @@ def run_backtest(
     initial_capital: float,
     monthly_deposit: float,
 ) -> BacktestResult:
-    tickers = list(set(config.core_universe + config.satellite_universe))
-    logger.info("Loading MOEX history %s … %s for %d tickers", start, end, len(tickers))
+    # Кандидаты для walk-forward: текущий ликвидный список + core_universe
+    try:
+        snap = fetch_tqbr_market_snapshot()
+        liquid = sorted(snap, key=lambda s: s.valtoday_rub, reverse=True)
+        scan_candidates = [s.ticker for s in liquid[: config.scan_liquid_pool]]
+    except Exception:
+        scan_candidates = list(config.core_universe)
 
-    histories: dict[str, dict[date, OhlcBar]] = {}
-    for t in tickers:
-        histories[t] = fetch_history(t, start, end)
-        logger.info("  %s: %d days", t, len(histories[t]))
+    all_tickers = list(set(scan_candidates + config.core_universe))
+    logger.info("Preloading history for %d tickers…", len(all_tickers))
+    histories = _preload_histories(all_tickers, start, end)
 
     index = fetch_index_history(config.market_index, start, end)
-    dividends_by_day = (
-        load_dividends_by_day(tickers, start, end) if config.include_dividends else {}
-    )
-
     trading_days = sorted(set().union(index.keys(), *[h.keys() for h in histories.values()]))
     trading_days = [d for d in trading_days if start <= d <= end]
     if not trading_days:
         raise RuntimeError("No trading days in range")
 
-    all_in_core = initial_capital < config.satellite_min_equity_rub
     state = PortfolioState(
-        core=SleeveState(
-            cash_rub=initial_capital if all_in_core else initial_capital * config.core_weight
-        ),
-        satellite=SleeveState(
-            cash_rub=0.0 if all_in_core else initial_capital * config.satellite_weight
-        ),
+        core=SleeveState(cash_rub=initial_capital),
+        satellite=SleeveState(cash_rub=0.0),
         initial_equity=initial_capital,
         peak_equity=initial_capital,
         equity_at_last_rebalance=initial_capital,
         last_rebalance_at="",
         last_scheduled_rebalance_at="",
-        satellite_month_start_equity=0.0 if all_in_core else initial_capital * config.satellite_weight,
-        satellite_baseline_equity=0.0 if all_in_core else initial_capital * config.satellite_weight,
+        satellite_month_start_equity=0.0,
+        satellite_baseline_equity=0.0,
         month_key=trading_days[0].strftime("%Y-%m"),
     )
 
-    core_trades = sat_trades = 0
+    core_trades = 0
     total_deposits = 0.0
     total_commissions = 0.0
     total_dividends = 0.0
     max_dd = 0.0
     first_month = trading_days[0].strftime("%Y-%m")
     prev_month = first_month
-    daily_monthly: list[tuple[str, float, float, float, float]] = []
+    active_universe = list(config.core_universe)
+    monthly_rows: list[MonthlySnapshot] = []
     core_cash_pcts: list[float] = []
-    months_no_positions: set[str] = set()
 
-    prices0 = prices_on(histories, tickers, trading_days[0])
-    if prices0:
-        ct, cf = rebalance_core_portfolio(
-            state, prices0, histories, trading_days[0], config, tag="INIT"
-        )
-        core_trades += ct
-        total_commissions += cf
+    dividends_by_day = (
+        load_dividends_by_day(all_tickers, start, end) if config.include_dividends else {}
+    )
 
     for day in trading_days:
-        prices = prices_on(histories, tickers, day)
+        prices = prices_on(histories, all_tickers, day)
         if not prices:
             continue
 
-        div_net = apply_daily_dividends(state, dividends_by_day.get(day, []), config)
-        total_dividends += div_net
-
-        equity = state.total_equity(prices)
-        if equity < config.satellite_min_equity_rub and state.satellite.cash_rub > 0:
-            state.core.cash_rub += state.satellite.cash_rub
-            state.satellite.cash_rub = 0.0
+        total_dividends += apply_daily_dividends(state, dividends_by_day.get(day, []), config)
 
         month = day.strftime("%Y-%m")
         if month != prev_month:
+            report = scan_promising_stocks(config, day, histories=histories)
+            if report.picks:
+                active_universe = [p.ticker for p in report.picks]
+                logger.info("Universe %s: %s", month, ",".join(active_universe))
+
             if month != first_month:
-                if equity < config.satellite_min_equity_rub:
-                    state.core.cash_rub += monthly_deposit
-                else:
-                    state.core.cash_rub += monthly_deposit * config.core_weight
-                    state.satellite.cash_rub += monthly_deposit * config.satellite_weight
+                state.core.cash_rub += monthly_deposit
                 total_deposits += monthly_deposit
-                ct, cf = rebalance_core_portfolio(
-                    state,
-                    prices,
-                    histories,
-                    day,
-                    config,
-                    tag="MONTHLY",
-                )
-                core_trades += ct
-                total_commissions += cf
-                prices = prices_on(histories, tickers, day)
-                rebalance_portfolio(state, prices, config)
+
+            ct, cf = rebalance_core_portfolio(
+                state,
+                prices,
+                histories,
+                day,
+                config,
+                universe=active_universe,
+                tag="MONTHLY" if month != first_month else "INIT",
+            )
+            core_trades += ct
+            total_commissions += cf
             prev_month = month
 
-        prices = prices_on(histories, tickers, day)
-        equity = state.total_equity(prices)
+        equity = state.core.equity(prices)
         if equity > state.peak_equity:
             state.peak_equity = equity
         dd = (state.peak_equity - equity) / state.peak_equity * 100 if state.peak_equity else 0
         max_dd = max(max_dd, dd)
+        if equity > 0:
+            core_cash_pcts.append(state.core.cash_rub / equity * 100)
 
-        profit_hit, _ = should_rebalance_satellite_profit(
-            state, prices, config.satellite_profit_rebalance_pct
+        contributed = initial_capital + total_deposits
+        monthly_rows.append(
+            MonthlySnapshot(
+                month=month,
+                total_equity=equity,
+                universe=",".join(active_universe[:5]) + ("…" if len(active_universe) > 5 else ""),
+                contributed_cumulative=contributed,
+                trading_pnl=equity - contributed,
+            )
         )
-        if profit_hit:
-            rebalance_satellite_profit_trim(state, prices, config)
-            prices = prices_on(histories, tickers, day)
 
-        risk = check_risk(
-            state,
-            prices,
-            config.max_drawdown_pct,
-            config.satellite_monthly_loss_cap_pct,
-        )
-
-        allow_sat = (
-            risk.allow_satellite
-            and _index_regime_ok(index, day, config.satellite_index_sma_period)
-            and equity >= config.satellite_min_equity_rub
-        )
-        if allow_sat:
-            for ticker in config.satellite_universe:
-                series = histories.get(ticker, {})
-                if not _ticker_above_sma(series, day, config.satellite_ticker_sma_period):
-                    continue
-                bars = ohlc_before(
-                    series,
-                    day,
-                    max(
-                        config.satellite_breakout_bars + config.satellite_atr_period + 30,
-                        config.satellite_ticker_sma_period + 10,
-                    ),
-                )
-                if len(bars) < config.satellite_breakout_bars + 5:
-                    continue
-                sig = evaluate_satellite(
-                    ticker,
-                    [b.high for b in bars],
-                    [b.low for b in bars],
-                    [b.close for b in bars],
-                    [b.volume for b in bars],
-                    config.satellite_breakout_bars,
-                    config.satellite_atr_period,
-                    config.satellite_min_rvol,
-                    config.satellite_require_close_confirm,
-                )
-                if sig and sig.action != SatelliteAction.HOLD:
-                    r = apply_satellite_signal(state, sig, config)
-                    if r:
-                        sat_trades += 1
-                        total_commissions += r.commission_rub
-
-        prices = prices_on(histories, tickers, day)
-        core_eq = state.core.equity(prices)
-        sat_eq = state.satellite.equity(prices)
-        equity = core_eq + sat_eq
-        if core_eq > 0:
-            core_cash_pcts.append(state.core.cash_rub / core_eq * 100)
-        if not state.core.positions:
-            months_no_positions.add(month)
-        contributed_so_far = initial_capital + total_deposits
-        daily_monthly.append((month, equity, core_eq, sat_eq, contributed_so_far))
-
-    prices = prices_on(histories, tickers, trading_days[-1])
-    final_core = state.core.equity(prices)
-    final_sat = state.satellite.equity(prices)
-    final = final_core + final_sat
+    prices = prices_on(histories, all_tickers, trading_days[-1])
+    final = state.core.equity(prices)
     contributed = initial_capital + total_deposits
     profit = final - contributed
-
-    core_contributed = initial_capital * config.core_weight + total_deposits * config.core_weight
-    sat_contributed = initial_capital * config.satellite_weight + total_deposits * config.satellite_weight
-    core_profit = final_core - core_contributed
-    sat_profit = final_sat - sat_contributed
 
     years = max((trading_days[-1] - trading_days[0]).days / 365.25, 0.01)
     infl_mult = (1 + config.inflation_annual_pct / 100) ** years
     inflation_drag = contributed * (infl_mult - 1)
     real_profit = profit - total_commissions - inflation_drag
 
-    by_month: dict[str, tuple[float, float, float, float]] = {}
-    for m, eq, c, s, contrib in daily_monthly:
-        by_month[m] = (eq, c, s, contrib)
-
-    monthly: list[MonthlySnapshot] = []
-    for m in sorted(by_month.keys()):
-        eq, c, s, contrib = by_month[m]
-        monthly.append(
-            MonthlySnapshot(
-                month=m,
-                total_equity=eq,
-                core_equity=c,
-                satellite_equity=s,
-                deposits_cumulative=contrib - initial_capital,
-                contributed_cumulative=contrib,
-                trading_pnl=eq - contrib,
-                core_pct=(c / eq * 100) if eq else 0,
-                satellite_pct=(s / eq * 100) if eq else 0,
-            )
-        )
-
-    bench = run_equal_weight_benchmark(
-        config, start, end, initial_capital, monthly_deposit
-    )
+    by_month: dict[str, MonthlySnapshot] = {}
+    for row in monthly_rows:
+        by_month[row.month] = row
 
     return BacktestResult(
         start=trading_days[0],
@@ -310,122 +192,46 @@ def run_backtest(
         total_deposits=total_deposits,
         total_contributed=contributed,
         final_equity=final,
-        final_core=final_core,
-        final_satellite=final_sat,
         profit_rub=profit,
-        core_profit_rub=core_profit,
-        satellite_profit_rub=sat_profit,
         return_on_contributed_pct=(profit / contributed * 100) if contributed else 0,
         max_drawdown_pct=max_dd,
-        trades=core_trades + sat_trades,
         core_rebalance_trades=core_trades,
-        satellite_trades=sat_trades,
         total_commissions=total_commissions,
         total_dividends_net=total_dividends,
         inflation_drag_rub=inflation_drag,
         real_profit_rub=real_profit,
-        benchmark_final=bench.final_equity,
-        benchmark_return_pct=bench.return_pct,
-        avg_core_cash_pct=(sum(core_cash_pcts) / len(core_cash_pcts)) if core_cash_pcts else 0.0,
-        months_core_all_cash=len(months_no_positions),
-        monthly=monthly,
+        avg_core_cash_pct=(sum(core_cash_pcts) / len(core_cash_pcts)) if core_cash_pcts else 0,
+        monthly=list(by_month.values()),
     )
 
 
-def _ascii_bar(value: float, max_value: float, width: int = 36) -> str:
-    if max_value <= 0:
-        return ""
-    filled = int(round(value / max_value * width))
-    return "█" * filled + "░" * (width - filled)
-
-
-def save_report_csv(result: BacktestResult, path: Path = REPORT_CSV) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
+def print_report(result: BacktestResult, config: Config) -> None:
+    REPORT_CSV.parent.mkdir(parents=True, exist_ok=True)
+    with REPORT_CSV.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(
-            [
-                "month",
-                "total_rub",
-                "core_rub",
-                "satellite_rub",
-                "core_pct",
-                "satellite_pct",
-                "deposits_cumulative",
-                "contributed_cumulative",
-                "trading_pnl",
-            ]
-        )
+        w.writerow(["month", "equity", "universe_sample", "contributed", "pnl"])
         for row in result.monthly:
             w.writerow(
                 [
                     row.month,
                     round(row.total_equity, 2),
-                    round(row.core_equity, 2),
-                    round(row.satellite_equity, 2),
-                    round(row.core_pct, 1),
-                    round(row.satellite_pct, 1),
-                    round(row.deposits_cumulative, 2),
+                    row.universe,
                     round(row.contributed_cumulative, 2),
                     round(row.trading_pnl, 2),
                 ]
             )
 
-
-def print_report(result: BacktestResult, config: Config) -> None:
-    save_report_csv(result)
-
     print("\n" + "=" * 72)
-    print("BACKTEST REPORT (акции MOEX, cross-sectional core)")
+    print("BACKTEST — core 100%, monthly MOEX scan → top 20, hold top 5")
     print("=" * 72)
-    print(f"Period:        {result.start} → {result.end}")
-    print(f"Core:          top {config.core_top_n} by {config.core_momentum_months}m momentum, 1/σ weights")
-    print(f"Dividends:     {'да' if config.include_dividends else 'нет'} (налог {config.dividend_tax_pct:.0f}%)")
-    print(f"Start capital: {result.initial_capital:,.0f} RUB")
-    print(f"Deposits:      {result.total_deposits:,.0f} RUB")
-    print(f"Contributed:   {result.total_contributed:,.0f} RUB")
-    print(f"Final equity:  {result.final_equity:,.0f} RUB")
-    print(f"  Core:        {result.final_core:,.0f} RUB")
-    print(f"  Satellite:   {result.final_satellite:,.0f} RUB")
-    print(f"Profit (nominal): {result.profit_rub:+,.0f} RUB ({result.return_on_contributed_pct:+.2f}%)")
-    print(f"Dividends (net):  +{result.total_dividends_net:,.0f} RUB")
-    print(f"Commissions:      −{result.total_commissions:,.0f} RUB")
-    print(
-        f"Benchmark (equal-weight core, same flows): "
-        f"{result.benchmark_final:,.0f} RUB ({result.benchmark_return_pct:+.2f}%)"
-    )
-    alpha = result.return_on_contributed_pct - result.benchmark_return_pct
-    print(f"vs benchmark:     {alpha:+.2f} pp")
-    print(f"Inflation (~{config.inflation_annual_pct:.0f}%/y): −{result.inflation_drag_rub:,.0f} RUB (est.)")
-    real_pct = (result.real_profit_rub / result.total_contributed * 100) if result.total_contributed else 0
-    print(f"≈ Real result:    {result.real_profit_rub:+,.0f} RUB ({real_pct:+.2f}%)")
-    print(f"Max drawdown:     {result.max_drawdown_pct:.1f}%")
-    print(
-        f"Trades:           {result.trades} "
-        f"(core rebalance {result.core_rebalance_trades}, sat {result.satellite_trades})"
-    )
-    print(
-        f"Core idle cash:   avg {result.avg_core_cash_pct:.1f}% in cash | "
-        f"{result.months_core_all_cash} months with zero stocks"
-    )
-    if result.avg_core_cash_pct > 25 or result.months_core_all_cash > 0:
-        print("  ⚠ Много простоя в кэше — проверьте CORE_MIN_TRADE_RUB и CORE_TREND_SMA")
-
-    print("\n--- Monthly: total / core / satellite ---")
-    print(f"{'Month':<8} {'Total':>10} {'Core':>10} {'Sat':>10} {'Trading PnL':>12}")
-    print("-" * 60)
-    for row in result.monthly:
-        print(
-            f"{row.month:<8} {row.total_equity:>10,.0f} {row.core_equity:>10,.0f} "
-            f"{row.satellite_equity:>10,.0f} {row.trading_pnl:>+12,.0f}"
-        )
-
-    totals = [r.total_equity for r in result.monthly]
-    max_eq = max(totals) if totals else 1
-    print("\n--- Equity chart (end of month) ---")
-    for row in result.monthly:
-        bar = _ascii_bar(row.total_equity, max_eq)
-        print(f"  {row.month}  {bar}  {row.total_equity:,.0f}")
-
-    print(f"\nCSV: {REPORT_CSV}")
+    print(f"Period:     {result.start} → {result.end}")
+    print(f"Holdings:   top {config.core_top_n} from scan top {config.scan_top_n}")
+    print(f"Dividends:  {'on' if config.include_dividends else 'off'} (tax {config.dividend_tax_pct:.0f}%)")
+    print(f"Contributed:{result.total_contributed:,.0f} RUB → Final {result.final_equity:,.0f} RUB")
+    print(f"Profit:     {result.profit_rub:+,.0f} RUB ({result.return_on_contributed_pct:+.2f}%)")
+    print(f"Dividends:  +{result.total_dividends_net:,.0f} | Fees −{result.total_commissions:,.0f}")
+    print(f"Real (est): {result.real_profit_rub:+,.0f} RUB | Max DD {result.max_drawdown_pct:.1f}%")
+    print(f"Idle cash:  avg {result.avg_core_cash_pct:.1f}%")
+    print(f"Trades:     {result.core_rebalance_trades}")
+    print(f"CSV:        {REPORT_CSV}")
     print("=" * 72 + "\n")

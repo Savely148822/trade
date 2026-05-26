@@ -55,11 +55,14 @@ def select_core_holdings(
     histories: dict[str, dict[date, OhlcBar]],
     as_of: date,
     config: Config,
+    *,
+    universe: list[str] | None = None,
 ) -> list[str]:
+    tickers = universe if universe is not None else config.core_universe
     sma = config.core_trend_sma if config.core_trend_sma > 0 else None
     ranked = rank_by_momentum(
         histories,
-        config.core_universe,
+        tickers,
         as_of,
         config.core_momentum_months,
         min_price_above_sma=sma,
@@ -67,7 +70,7 @@ def select_core_holdings(
     if not ranked and sma:
         ranked = rank_by_momentum(
             histories,
-            config.core_universe,
+            tickers,
             as_of,
             config.core_momentum_months,
             min_price_above_sma=None,
@@ -75,8 +78,7 @@ def select_core_holdings(
         if ranked:
             logger.info("Core: SMA(%s) filter empty — using momentum only", sma)
     if not ranked:
-        # Крайний случай: равные веса по тем, у кого есть цена
-        fallback = [t for t in config.core_universe if as_of in histories.get(t, {})]
+        fallback = [t for t in tickers if as_of in histories.get(t, {})]
         return fallback[: config.core_top_n]
     return [t for t, _ in ranked[: config.core_top_n]]
 
@@ -89,6 +91,7 @@ def rebalance_core_portfolio(
     config: Config,
     *,
     extra_cash: float = 0,
+    universe: list[str] | None = None,
     tag: str = "CORE",
 ) -> tuple[int, float]:
     """
@@ -96,7 +99,7 @@ def rebalance_core_portfolio(
     extra_cash — новое пополнение в core перед ребалансом.
     """
     state.core.cash_rub += extra_cash
-    holdings = select_core_holdings(histories, as_of, config)
+    holdings = select_core_holdings(histories, as_of, config, universe=universe)
     if not holdings:
         logger.warning("Core rebalance: no ranked tickers on %s", as_of)
         return 0, 0.0

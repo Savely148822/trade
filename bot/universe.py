@@ -1,6 +1,5 @@
-"""Стартовые вселенные тикеров MOEX (только акции TQBR, без БПИФ)."""
+"""Fallback, если .env ещё не обновлён сканом."""
 
-# Core: ликвидные голубые фишки (~80%)
 DEFAULT_CORE_UNIVERSE: list[str] = [
     "SBER",
     "LKOH",
@@ -12,15 +11,4 @@ DEFAULT_CORE_UNIVERSE: list[str] = [
     "GMKN",
     "ROSN",
     "MGNT",
-]
-
-# Satellite: более волатильные (~20%)
-DEFAULT_SATELLITE_UNIVERSE: list[str] = [
-    "VTBR",
-    "AFKS",
-    "MTSS",
-    "AFLT",
-    "MAGN",
-    "CHMF",
-    "ALRS",
 ]

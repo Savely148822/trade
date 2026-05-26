@@ -30,7 +30,7 @@ class SleeveState:
 @dataclass
 class PortfolioState:
     core: SleeveState
-    satellite: SleeveState
+    satellite: SleeveState  # legacy JSON; всегда пустой в core-only
     initial_equity: float
     peak_equity: float
     equity_at_last_rebalance: float
@@ -45,25 +45,23 @@ class PortfolioState:
         return self.core.equity(prices) + self.satellite.equity(prices)
 
 
-def load_state(initial_rub: float, core_weight: float) -> PortfolioState:
+def load_state(initial_rub: float) -> PortfolioState:
     if STATE_PATH.exists():
         raw = json.loads(STATE_PATH.read_text())
-        return _from_dict(raw, initial_rub, core_weight)
+        return _from_dict(raw, fallback_initial=initial_rub)
 
-    core_cash = initial_rub * core_weight
-    sat_cash = initial_rub * (1 - core_weight)
     now = datetime.now(timezone.utc).isoformat()
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     state = PortfolioState(
-        core=SleeveState(cash_rub=core_cash),
-        satellite=SleeveState(cash_rub=sat_cash),
+        core=SleeveState(cash_rub=initial_rub),
+        satellite=SleeveState(cash_rub=0.0),
         initial_equity=initial_rub,
         peak_equity=initial_rub,
         equity_at_last_rebalance=initial_rub,
         last_rebalance_at=now,
         last_scheduled_rebalance_at=now,
-        satellite_month_start_equity=sat_cash,
-        satellite_baseline_equity=sat_cash,
+        satellite_month_start_equity=0.0,
+        satellite_baseline_equity=0.0,
         month_key=month,
         updated_at=now,
     )
@@ -102,7 +100,7 @@ def _to_dict(state: PortfolioState) -> dict:
     }
 
 
-def _from_dict(raw: dict, fallback_initial: float, core_weight: float) -> PortfolioState:
+def _from_dict(raw: dict, fallback_initial: float) -> PortfolioState:
     def sleeve(data: dict) -> SleeveState:
         pos = {
             t: Position(qty=v["qty"], avg_price=v["avg_price"])
@@ -112,10 +110,9 @@ def _from_dict(raw: dict, fallback_initial: float, core_weight: float) -> Portfo
 
     initial = float(raw.get("initial_equity", fallback_initial))
     now = datetime.now(timezone.utc).isoformat()
-
-    return PortfolioState(
+    state = PortfolioState(
         core=sleeve(raw["core"]),
-        satellite=sleeve(raw["satellite"]),
+        satellite=sleeve(raw.get("satellite", {"cash_rub": 0, "positions": {}})),
         initial_equity=initial,
         peak_equity=float(raw.get("peak_equity", initial)),
         equity_at_last_rebalance=float(
@@ -125,18 +122,24 @@ def _from_dict(raw: dict, fallback_initial: float, core_weight: float) -> Portfo
         last_scheduled_rebalance_at=str(
             raw.get("last_scheduled_rebalance_at", raw.get("last_rebalance_at", now))
         ),
-        satellite_month_start_equity=float(
-            raw.get(
-                "satellite_month_start_equity",
-                initial * (1 - core_weight),
-            )
-        ),
-        satellite_baseline_equity=float(
-            raw.get(
-                "satellite_baseline_equity",
-                initial * (1 - core_weight),
-            )
-        ),
+        satellite_month_start_equity=float(raw.get("satellite_month_start_equity", 0)),
+        satellite_baseline_equity=float(raw.get("satellite_baseline_equity", 0)),
         month_key=str(raw.get("month_key", datetime.now(timezone.utc).strftime("%Y-%m"))),
         updated_at=str(raw.get("updated_at", "")),
     )
+    # Миграция: весь кэш satellite → core
+    if state.satellite.cash_rub > 0 or state.satellite.positions:
+        state.core.cash_rub += state.satellite.cash_rub
+        for t, p in state.satellite.positions.items():
+            if t in state.core.positions:
+                old = state.core.positions[t]
+                total_q = old.qty + p.qty
+                state.core.positions[t] = Position(
+                    qty=total_q,
+                    avg_price=(old.avg_price * old.qty + p.avg_price * p.qty) / total_q,
+                )
+            else:
+                state.core.positions[t] = p
+        state.satellite = SleeveState(cash_rub=0.0)
+        save_state(state)
+    return state

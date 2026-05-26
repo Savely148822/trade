@@ -1,0 +1,168 @@
+{
+  "as_of": "2026-05-26",
+  "month": "2026-05",
+  "candidates_screened": 100,
+  "top_n": 20,
+  "picks": [
+    {
+      "rank": 1,
+      "ticker": "VTBR",
+      "score": 0.4483,
+      "momentum_6m_pct": 21.18,
+      "valtoday_mln": 13491.29,
+      "last_price": 86.25
+    },
+    {
+      "rank": 2,
+      "ticker": "VJGZ",
+      "score": 0.2697,
+      "momentum_6m_pct": 38.48,
+      "valtoday_mln": 17.23,
+      "last_price": 3210.0
+    },
+    {
+      "rank": 3,
+      "ticker": "MRKZ",
+      "score": 0.2473,
+      "momentum_6m_pct": 35.14,
+      "valtoday_mln": 60.86,
+      "last_price": 0.14
+    },
+    {
+      "rank": 4,
+      "ticker": "FESH",
+      "score": 0.2322,
+      "momentum_6m_pct": 32.42,
+      "valtoday_mln": 235.19,
+      "last_price": 67.96
+    },
+    {
+      "rank": 5,
+      "ticker": "USBN",
+      "score": 0.1982,
+      "momentum_6m_pct": 28.27,
+      "valtoday_mln": 15.16,
+      "last_price": 0.15
+    },
+    {
+      "rank": 6,
+      "ticker": "DOMRF",
+      "score": 0.1827,
+      "momentum_6m_pct": 25.08,
+      "valtoday_mln": 322.11,
+      "last_price": 2366.5
+    },
+    {
+      "rank": 7,
+      "ticker": "LSNGP",
+      "score": 0.1692,
+      "momentum_6m_pct": 24.06,
+      "valtoday_mln": 35.69,
+      "last_price": 369.45
+    },
+    {
+      "rank": 8,
+      "ticker": "MSRS",
+      "score": 0.1575,
+      "momentum_6m_pct": 22.07,
+      "valtoday_mln": 135.95,
+      "last_price": 1.83
+    },
+    {
+      "rank": 9,
+      "ticker": "MRKV",
+      "score": 0.1472,
+      "momentum_6m_pct": 20.96,
+      "valtoday_mln": 21.76,
+      "last_price": 0.19
+    },
+    {
+      "rank": 10,
+      "ticker": "PIKK",
+      "score": 0.136,
+      "momentum_6m_pct": 18.83,
+      "valtoday_mln": 187.69,
+      "last_price": 540.8
+    },
+    {
+      "rank": 11,
+      "ticker": "LEAS",
+      "score": 0.1282,
+      "momentum_6m_pct": 18.19,
+      "valtoday_mln": 36.32,
+      "last_price": 662.6
+    },
+    {
+      "rank": 12,
+      "ticker": "MRKU",
+      "score": 0.1227,
+      "momentum_6m_pct": 17.39,
+      "valtoday_mln": 43.16,
+      "last_price": 0.58
+    },
+    {
+      "rank": 13,
+      "ticker": "SBER",
+      "score": 0.1105,
+      "momentum_6m_pct": 7.06,
+      "valtoday_mln": 2748.5,
+      "last_price": 320.05
+    },
+    {
+      "rank": 14,
+      "ticker": "ASTR",
+      "score": 0.1068,
+      "momentum_6m_pct": 14.95,
+      "valtoday_mln": 97.47,
+      "last_price": 283.9
+    },
+    {
+      "rank": 15,
+      "ticker": "BANEP",
+      "score": 0.0952,
+      "momentum_6m_pct": 13.46,
+      "valtoday_mln": 45.31,
+      "last_price": 998.5
+    },
+    {
+      "rank": 16,
+      "ticker": "FLOT",
+      "score": 0.0904,
+      "momentum_6m_pct": 12.13,
+      "valtoday_mln": 246.17,
+      "last_price": 82.78
+    },
+    {
+      "rank": 17,
+      "ticker": "UGLD",
+      "score": 0.0796,
+      "momentum_6m_pct": 4.65,
+      "valtoday_mln": 2114.64,
+      "last_price": 0.6
+    },
+    {
+      "rank": 18,
+      "ticker": "TATN",
+      "score": 0.072,
+      "momentum_6m_pct": 8.03,
+      "valtoday_mln": 712.31,
+      "last_price": 601.6
+    },
+    {
+      "rank": 19,
+      "ticker": "SBERP",
+      "score": 0.0598,
+      "momentum_6m_pct": 7.68,
+      "valtoday_mln": 272.49,
+      "last_price": 320.73
+    },
+    {
+      "rank": 20,
+      "ticker": "CNRU",
+      "score": 0.0566,
+      "momentum_6m_pct": 8.0,
+      "valtoday_mln": 27.92,
+      "last_price": 633.8
+    }
+  ]
+}

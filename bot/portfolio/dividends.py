@@ -53,5 +53,4 @@ def apply_daily_dividends(
     total = 0.0
     for ev in events:
         total += apply_dividend(state.core, "core", ev, config)
-        total += apply_dividend(state.satellite, "satellite", ev, config)
     return total
