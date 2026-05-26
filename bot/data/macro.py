@@ -13,6 +13,7 @@ from bot.data.moex_iss import fetch_index_history
 logger = logging.getLogger(__name__)
 
 CBR_KEYRATE_FALLBACK_PCT = 21.0
+_KEY_RATE_CACHE: float | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,10 @@ def fetch_usdrub_history(start: date, end: date) -> dict[date, float]:
 
 def fetch_cbr_key_rate() -> float:
     """Ключевая ставка ЦБ, %. ISS/ЦБ API нестабилен — fallback из env."""
+    global _KEY_RATE_CACHE
+    if _KEY_RATE_CACHE is not None:
+        return _KEY_RATE_CACHE
+
     import os
 
     fallback = float(os.getenv("CBR_KEY_RATE_PCT", str(CBR_KEYRATE_FALLBACK_PCT)))
@@ -69,15 +74,16 @@ def fetch_cbr_key_rate() -> float:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
             resp = client.get(url)
             resp.raise_for_status()
-        # Последнее значение в таблице: ищем число вида 21,00
         import re
 
         m = re.findall(r"(\d{1,2}[,.]\d+)\s*%", resp.text)
         if m:
-            return float(m[-1].replace(",", "."))
+            _KEY_RATE_CACHE = float(m[-1].replace(",", "."))
+            return _KEY_RATE_CACHE
     except Exception as e:
         logger.debug("CBR key rate: %s — using fallback %.1f%%", e, fallback)
-    return fallback
+    _KEY_RATE_CACHE = fallback
+    return _KEY_RATE_CACHE
 
 
 def build_macro_snapshot(as_of: date, index_ticker: str = "IMOEX") -> MacroSnapshot:

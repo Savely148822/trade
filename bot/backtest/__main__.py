@@ -10,6 +10,8 @@ from bot.config import Config
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     config = Config.from_env()
     end = date.fromisoformat(os.getenv("BACKTEST_END", date.today().isoformat()))

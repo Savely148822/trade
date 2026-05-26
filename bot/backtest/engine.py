@@ -10,7 +10,7 @@ from pathlib import Path
 
 from bot.analytics.monthly_scan import scan_promising_stocks
 from bot.config import Config
-from bot.data.moex_dividends import load_dividends_by_day
+from bot.data.moex_dividends import dividends_for_day
 from bot.data.moex_iss import (
     OhlcBar,
     fetch_history,
@@ -152,29 +152,39 @@ def run_paper_replay(
     core_cash_pcts: list[float] = []
     month_start_days: list[date] = []
 
-    dividends_by_day = (
-        load_dividends_by_day(all_tickers, preload_start, end) if config.include_dividends else {}
-    )
+    dividends_cache: dict[str, list] = {}
+    macro_by_month: dict[str, object] = {}
+    trading_day_idx = 0
 
     for day in trading_days:
         prices = prices_on(histories, all_tickers, day)
         if not prices:
             continue
 
-        total_dividends += apply_daily_dividends(state, dividends_by_day.get(day, []), config)
+        if config.include_dividends:
+            div_tickers = list(set(state.core.positions.keys()) | set(active_universe))
+            day_events = dividends_for_day(
+                div_tickers, day, preload_start, end, dividends_cache
+            )
+            total_dividends += apply_daily_dividends(state, day_events, config)
 
         if state.core.positions and config.exit_on_negative_forecast:
-            et, ef = apply_forecast_exits(
-                state,
-                prices,
-                histories,
-                config,
-                day,
-                index_series=index,
-                macro=build_macro_snapshot(day, config.market_index),
-            )
-            exit_trades += et
-            total_commissions += ef
+            trading_day_idx += 1
+            if trading_day_idx % 5 == 0:
+                month_key = day.strftime("%Y-%m")
+                if month_key not in macro_by_month:
+                    macro_by_month[month_key] = build_macro_snapshot(day, config.market_index)
+                et, ef = apply_forecast_exits(
+                    state,
+                    prices,
+                    histories,
+                    config,
+                    day,
+                    index_series=index,
+                    macro=macro_by_month[month_key],
+                )
+                exit_trades += et
+                total_commissions += ef
 
         month = day.strftime("%Y-%m")
         if month != prev_month:

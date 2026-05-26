@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -48,12 +49,23 @@ def fetch_dividends(
 
     url = f"{BASE_URL}/securities/{ticker}/dividends.json"
     params = {"iss.meta": "off"}
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.get(url, params=params)
-        if resp.status_code == 404:
-            return []
-        resp.raise_for_status()
-        payload = resp.json()
+    payload = None
+    for attempt in range(4):
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.get(url, params=params)
+                if resp.status_code == 404:
+                    return []
+                resp.raise_for_status()
+                payload = resp.json()
+                break
+        except httpx.HTTPError as exc:
+            if attempt >= 3:
+                logger.warning("Dividends %s: %s", ticker, exc)
+                return []
+            time.sleep(2**attempt)
+    if payload is None:
+        return []
 
     rows = payload.get("dividends", {}).get("data", [])
     cols = payload.get("dividends", {}).get("columns", [])
@@ -95,6 +107,23 @@ def fetch_dividends(
             )
         )
     return events
+
+
+def dividends_for_day(
+    tickers: list[str],
+    day: date,
+    start: date,
+    end: date,
+    cache: dict[str, list[DividendEvent]],
+) -> list[DividendEvent]:
+    out: list[DividendEvent] = []
+    for t in tickers:
+        if t not in cache:
+            cache[t] = fetch_dividends(t, start, end)
+        for ev in cache[t]:
+            if ev.registry_close == day:
+                out.append(ev)
+    return out
 
 
 def load_dividends_by_day(
