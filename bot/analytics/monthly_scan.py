@@ -67,6 +67,27 @@ def _liquidity_pool_from_snapshot(
     return [(s.ticker, s.valtoday_rub) for s in liquid[: config.scan_liquid_pool]]
 
 
+def liquid_pool_from_histories(
+    histories: dict[str, dict[date, OhlcBar]],
+    as_of: date,
+    config: Config,
+    *,
+    limit: int | None = None,
+) -> list[str]:
+    """Топ ликвидных на дату as_of — для walk-forward без look-ahead."""
+    cap = limit or config.scan_liquid_pool
+    scored: list[tuple[str, float]] = []
+    for ticker, series in histories.items():
+        days = sorted(d for d in series if d <= as_of)[-20:]
+        if len(days) < 10:
+            continue
+        avg_turn = sum(series[d].close * series[d].volume for d in days) / len(days)
+        if avg_turn >= config.min_daily_volume_rub:
+            scored.append((ticker, avg_turn))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [t for t, _ in scored[:cap]]
+
+
 def _load_histories_for_pool(
     tickers: list[str],
     as_of: date,
@@ -93,7 +114,7 @@ def scan_promising_stocks(
     month = as_of.strftime("%Y-%m")
 
     if histories:
-        pool_tickers = list(histories.keys())[: config.scan_liquid_pool]
+        pool_tickers = liquid_pool_from_histories(histories, as_of, config)
     else:
         pool_tickers = [t for t, _ in _liquidity_pool_from_snapshot(config)]
 

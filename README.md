@@ -56,8 +56,14 @@ DIVIDEND_NO_INFO_DISCOUNT=0.85
 DIVIDEND_SPARSE_DISCOUNT=0.90
 ```
 
-## Бэктest (опционально)
+## Replay на истории (2 года)
 
-`python3 -m bot.backtest` — walk-forward симуляция. Для калибровки paper не обязателен.
+Та же логика, что paper-бот, день за днём на MOEX (walk-forward, без look-ahead по ликвидности):
+
+```bash
+python3 -m bot.backtest
+```
+
+Период: `BACKTEST_START` / `BACKTEST_END` в `.env` (по умолчанию 2 года). Отчёт: `data/paper_replay_report.csv`, сравнение с IMOEX DCA.
 
 Не является инвестиционной рекомендацией.
