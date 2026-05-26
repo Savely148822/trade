@@ -23,11 +23,16 @@ bot/
   config.py              # .env
   runner.py              # главный цикл
   data/moex_iss.py       # котировки MOEX
+  data/market_regime.py  # IMOEX, RVOL
   strategies/            # core momentum, satellite breakout
-  portfolio/             # paper-портфель и исполнение
+  portfolio/             # paper-портфель, ребаланс 80/20
   risk/                  # просадка, лимит satellite
   brokers/finam.py       # live — фаза 2
 ```
+
+**Satellite:** пробой по закрытию, RVOL ≥ 1.5, IMOEX выше SMA(20), тикер выше SMA(50).
+
+**Ребаланс:** раз в `REBALANCE_INTERVAL_SEC` (по умолчанию 7 дней) пересчёт equity и деление **80/20 от текущей суммы**; отчёт PnL с прошлого ребаланса.
 
 ## Следующий шаг для вас
 

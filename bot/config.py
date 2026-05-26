@@ -35,6 +35,12 @@ class Config:
     satellite_monthly_loss_cap_pct: float
     min_daily_volume_rub: float
     poll_interval_sec: int
+    rebalance_interval_sec: int
+    market_index: str
+    satellite_min_rvol: float
+    satellite_index_sma_period: int
+    satellite_ticker_sma_period: int
+    satellite_require_close_confirm: bool
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -73,4 +79,18 @@ class Config:
             ),
             min_daily_volume_rub=float(os.getenv("MIN_DAILY_VOLUME_RUB", "5000000")),
             poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "300")),
+            rebalance_interval_sec=int(
+                os.getenv("REBALANCE_INTERVAL_SEC", str(7 * 24 * 3600))
+            ),
+            market_index=os.getenv("MARKET_INDEX", "IMOEX").upper(),
+            satellite_min_rvol=float(os.getenv("SATELLITE_MIN_RVOL", "1.5")),
+            satellite_index_sma_period=int(
+                os.getenv("SATELLITE_INDEX_SMA_PERIOD", "20")
+            ),
+            satellite_ticker_sma_period=int(
+                os.getenv("SATELLITE_TICKER_SMA_PERIOD", "50")
+            ),
+            satellite_require_close_confirm=_bool(
+                os.getenv("SATELLITE_REQUIRE_CLOSE_CONFIRM"), True
+            ),
         )

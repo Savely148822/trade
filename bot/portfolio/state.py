@@ -31,7 +31,10 @@ class SleeveState:
 class PortfolioState:
     core: SleeveState
     satellite: SleeveState
+    initial_equity: float
     peak_equity: float
+    equity_at_last_rebalance: float
+    last_rebalance_at: str
     satellite_month_start_equity: float
     month_key: str
     updated_at: str = ""
@@ -43,7 +46,7 @@ class PortfolioState:
 def load_state(initial_rub: float, core_weight: float) -> PortfolioState:
     if STATE_PATH.exists():
         raw = json.loads(STATE_PATH.read_text())
-        return _from_dict(raw)
+        return _from_dict(raw, initial_rub, core_weight)
 
     core_cash = initial_rub * core_weight
     sat_cash = initial_rub * (1 - core_weight)
@@ -52,7 +55,10 @@ def load_state(initial_rub: float, core_weight: float) -> PortfolioState:
     state = PortfolioState(
         core=SleeveState(cash_rub=core_cash),
         satellite=SleeveState(cash_rub=sat_cash),
+        initial_equity=initial_rub,
         peak_equity=initial_rub,
+        equity_at_last_rebalance=initial_rub,
+        last_rebalance_at=now,
         satellite_month_start_equity=sat_cash,
         month_key=month,
         updated_at=now,
@@ -80,14 +86,17 @@ def _to_dict(state: PortfolioState) -> dict:
     return {
         "core": sleeve(state.core),
         "satellite": sleeve(state.satellite),
+        "initial_equity": state.initial_equity,
         "peak_equity": state.peak_equity,
+        "equity_at_last_rebalance": state.equity_at_last_rebalance,
+        "last_rebalance_at": state.last_rebalance_at,
         "satellite_month_start_equity": state.satellite_month_start_equity,
         "month_key": state.month_key,
         "updated_at": state.updated_at,
     }
 
 
-def _from_dict(raw: dict) -> PortfolioState:
+def _from_dict(raw: dict, fallback_initial: float, core_weight: float) -> PortfolioState:
     def sleeve(data: dict) -> SleeveState:
         pos = {
             t: Position(qty=v["qty"], avg_price=v["avg_price"])
@@ -95,11 +104,24 @@ def _from_dict(raw: dict) -> PortfolioState:
         }
         return SleeveState(cash_rub=float(data["cash_rub"]), positions=pos)
 
+    initial = float(raw.get("initial_equity", fallback_initial))
+    now = datetime.now(timezone.utc).isoformat()
+
     return PortfolioState(
         core=sleeve(raw["core"]),
         satellite=sleeve(raw["satellite"]),
-        peak_equity=float(raw["peak_equity"]),
-        satellite_month_start_equity=float(raw["satellite_month_start_equity"]),
-        month_key=str(raw["month_key"]),
+        initial_equity=initial,
+        peak_equity=float(raw.get("peak_equity", initial)),
+        equity_at_last_rebalance=float(
+            raw.get("equity_at_last_rebalance", initial)
+        ),
+        last_rebalance_at=str(raw.get("last_rebalance_at", now)),
+        satellite_month_start_equity=float(
+            raw.get(
+                "satellite_month_start_equity",
+                initial * (1 - core_weight),
+            )
+        ),
+        month_key=str(raw.get("month_key", datetime.now(timezone.utc).strftime("%Y-%m"))),
         updated_at=str(raw.get("updated_at", "")),
     )

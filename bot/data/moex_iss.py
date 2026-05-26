@@ -97,6 +97,25 @@ def fetch_last_price(ticker: str) -> float | None:
     return closes[-1] if closes else None
 
 
+def fetch_index_closes(index: str, days: int = 120) -> list[float]:
+    start = date.today() - timedelta(days=days + 30)
+    url = (
+        f"{BASE_URL}/engines/stock/markets/index/securities/{index}/candles.json"
+    )
+    params = {
+        "interval": 24,
+        "from": start.isoformat(),
+        "iss.meta": "off",
+    }
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(url, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    candles = payload.get("candles", {}).get("data", [])
+    return [float(row[1]) for row in candles[-days:]]
+
+
 def fetch_security_info(ticker: str) -> dict[str, Any] | None:
     url = f"{BASE_URL}/securities/{ticker}.json"
     params = {"iss.meta": "off"}
