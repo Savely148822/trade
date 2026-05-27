@@ -39,6 +39,10 @@ class PortfolioState:
     satellite_month_start_equity: float
     satellite_baseline_equity: float
     month_key: str
+    paid_dividend_keys: list[str] = field(default_factory=list)
+    total_dividends_net_rub: float = 0.0
+    total_deposits_rub: float = 0.0
+    last_dividend_date: str = ""
     updated_at: str = ""
 
     def total_equity(self, prices: dict[str, float]) -> float:
@@ -63,6 +67,10 @@ def load_state(initial_rub: float) -> PortfolioState:
         satellite_month_start_equity=0.0,
         satellite_baseline_equity=0.0,
         month_key=month,
+        paid_dividend_keys=[],
+        total_dividends_net_rub=0.0,
+        total_deposits_rub=0.0,
+        last_dividend_date="",
         updated_at=now,
     )
     save_state(state)
@@ -96,6 +104,10 @@ def _to_dict(state: PortfolioState) -> dict:
         "satellite_month_start_equity": state.satellite_month_start_equity,
         "satellite_baseline_equity": state.satellite_baseline_equity,
         "month_key": state.month_key,
+        "paid_dividend_keys": list(state.paid_dividend_keys),
+        "total_dividends_net_rub": state.total_dividends_net_rub,
+        "total_deposits_rub": state.total_deposits_rub,
+        "last_dividend_date": state.last_dividend_date,
         "updated_at": state.updated_at,
     }
 
@@ -125,6 +137,10 @@ def _from_dict(raw: dict, fallback_initial: float) -> PortfolioState:
         satellite_month_start_equity=float(raw.get("satellite_month_start_equity", 0)),
         satellite_baseline_equity=float(raw.get("satellite_baseline_equity", 0)),
         month_key=str(raw.get("month_key", datetime.now(timezone.utc).strftime("%Y-%m"))),
+        paid_dividend_keys=list(raw.get("paid_dividend_keys", [])),
+        total_dividends_net_rub=float(raw.get("total_dividends_net_rub", 0.0)),
+        total_deposits_rub=float(raw.get("total_deposits_rub", 0.0)),
+        last_dividend_date=str(raw.get("last_dividend_date", "")),
         updated_at=str(raw.get("updated_at", "")),
     )
     # Миграция: весь кэш satellite → core

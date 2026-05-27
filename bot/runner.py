@@ -11,7 +11,9 @@ from bot.config import Config
 from bot.data.moex_iss import fetch_history, fetch_last_price
 from bot.portfolio.core_portfolio import rebalance_core_portfolio
 from bot.portfolio.deposits import current_month_key, process_new_month
+from bot.portfolio.dividends import process_dividends_through
 from bot.portfolio.forecast_exits import apply_forecast_exits
+from bot.portfolio.paper_status import log_paper_status
 from bot.portfolio.state import load_state, save_state
 from bot.risk.manager import check_risk
 
@@ -51,6 +53,15 @@ def run_monthly_scan_and_env(config: Config) -> list[str]:
     return tickers
 
 
+def _cycle_tickers(config: Config, *, universe: list[str] | None = None, positions: list[str] | None = None) -> list[str]:
+    tickers = set(config.core_universe) | {config.bond_ticker.upper()}
+    if universe:
+        tickers |= set(universe)
+    if positions:
+        tickers |= set(positions)
+    return sorted(tickers)
+
+
 def run_cycle(config: Config) -> None:
     broker = FinamBroker(config.finam_token, config.paper_trading)
     mode = "PAPER" if config.paper_trading else "LIVE"
@@ -61,19 +72,27 @@ def run_cycle(config: Config) -> None:
         logger.info("=== New month: MOEX scan + .env + deposit + rebalance ===")
         universe = run_monthly_scan_and_env(config)
         config = Config.from_env()
-        histories = _load_histories(universe)
-        prices = _collect_prices(universe)
+        tickers = _cycle_tickers(config, universe=universe)
+        histories = _load_histories(tickers)
+        prices = _collect_prices(tickers)
         process_new_month(state, prices, histories, date.today(), config, month, universe=universe)
     elif not state.core.positions and state.core.cash_rub >= config.core_min_trade_rub:
         universe = config.core_universe
-        histories = _load_histories(universe)
-        prices = _collect_prices(universe)
+        tickers = _cycle_tickers(config, universe=universe)
+        histories = _load_histories(tickers)
+        prices = _collect_prices(tickers)
         rebalance_core_portfolio(
             state, prices, histories, date.today(), config, universe=universe, tag="INIT"
         )
 
-    tickers = list(set(config.core_universe) | set(state.core.positions.keys()))
+    tickers = _cycle_tickers(config, positions=list(state.core.positions.keys()))
     prices = _collect_prices(tickers)
+
+    if config.include_dividends and state.core.positions:
+        div_net = process_dividends_through(state, date.today(), config)
+        if div_net > 0:
+            logger.info("Dividends credited: +%.0f RUB (total %.0f RUB)", div_net, state.total_dividends_net_rub)
+            prices = _collect_prices(tickers)
 
     if state.core.positions and config.exit_on_negative_forecast:
         held = list(state.core.positions.keys())
@@ -88,8 +107,9 @@ def run_cycle(config: Config) -> None:
     risk = check_risk(state, prices, config.max_drawdown_pct)
     equity = state.core.equity(prices)
 
+    log_paper_status(state, prices, config)
     logger.info(
-        "=== [%s] equity=%.0f RUB | DD=%.1f%% | universe %d names | %s ===",
+        "=== [%s] equity=%.0f RUB | DD=%.1f%% | universe %d | %s ===",
         mode,
         equity,
         risk.drawdown_pct,
@@ -102,9 +122,12 @@ def run_cycle(config: Config) -> None:
 
 def run_bot(config: Config) -> None:
     logger.info(
-        "Core-only engine | scan top-%d / hold top-%d | deposit %.0f RUB/mo",
+        "Core engine | scan top-%d / hold top-%d (min %d) | bond %.0f%% %s | deposit %.0f RUB/mo",
         config.scan_top_n,
         config.core_top_n,
+        config.core_min_positions,
+        config.bond_allocation_pct,
+        config.bond_ticker,
         config.monthly_deposit_rub,
     )
     while True:

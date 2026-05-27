@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 def apply_monthly_deposit(state: PortfolioState, config: Config) -> float:
     state.core.cash_rub += config.monthly_deposit_rub
+    state.total_deposits_rub += config.monthly_deposit_rub
     logger.info("Deposit +%.0f RUB → core", config.monthly_deposit_rub)
     return config.monthly_deposit_rub
 

@@ -27,12 +27,17 @@ class Config:
     monthly_deposit_rub: float
     core_momentum_months: int
     core_top_n: int
+    core_min_positions: int
+    core_select_scan_order: bool
     core_trend_sma: int
     core_vol_lookback: int
     core_universe: list[str]
     scan_top_n: int
     scan_liquid_pool: int
     scan_min_forecast_pct: float
+    scan_adaptive_fill: bool
+    scan_adaptive_max_tier: str
+    scan_min_universe: int
     scan_min_avg_turnover_rub: float
     scan_min_price_rub: float
     scan_max_vol_annual: float
@@ -60,6 +65,14 @@ class Config:
     core_min_trade_rub: float
     include_dividends: bool
     dividend_tax_pct: float
+    dividend_use_proxy: bool
+    dividend_proxy_months: int
+    dividend_history_months: int
+    dividend_default_cycle_days: int
+    dividend_no_info_discount: float
+    dividend_sparse_discount: float
+    bond_allocation_pct: float
+    bond_ticker: str
     inflation_annual_pct: float
 
     @classmethod
@@ -71,6 +84,8 @@ class Config:
             monthly_deposit_rub=float(os.getenv("MONTHLY_DEPOSIT_RUB", "2000")),
             core_momentum_months=int(os.getenv("CORE_MOMENTUM_MONTHS", "6")),
             core_top_n=int(os.getenv("CORE_TOP_N", "5")),
+            core_min_positions=int(os.getenv("CORE_MIN_POSITIONS", "3")),
+            core_select_scan_order=_bool(os.getenv("CORE_SELECT_SCAN_ORDER"), True),
             core_trend_sma=int(os.getenv("CORE_TREND_SMA", "0")),
             core_vol_lookback=int(os.getenv("CORE_VOL_LOOKBACK", "20")),
             core_universe=_list(
@@ -79,7 +94,10 @@ class Config:
             ),
             scan_top_n=int(os.getenv("SCAN_TOP_N", "20")),
             scan_liquid_pool=int(os.getenv("SCAN_LIQUID_POOL", "100")),
-            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "1.0")),
+            scan_min_forecast_pct=float(os.getenv("SCAN_MIN_FORECAST_PCT", "0.5")),
+            scan_adaptive_fill=_bool(os.getenv("SCAN_ADAPTIVE_FILL"), True),
+            scan_adaptive_max_tier=os.getenv("SCAN_ADAPTIVE_MAX_TIER", "liquid-positive").strip().lower(),
+            scan_min_universe=int(os.getenv("SCAN_MIN_UNIVERSE", "10")),
             scan_min_avg_turnover_rub=float(
                 os.getenv("SCAN_MIN_AVG_TURNOVER_RUB", "20_000_000").replace("_", "")
             ),
@@ -109,5 +127,13 @@ class Config:
             core_min_trade_rub=float(os.getenv("CORE_MIN_TRADE_RUB", "500")),
             include_dividends=_bool(os.getenv("INCLUDE_DIVIDENDS"), True),
             dividend_tax_pct=float(os.getenv("DIVIDEND_TAX_PCT", "13")),
+            dividend_use_proxy=_bool(os.getenv("DIVIDEND_USE_PROXY"), True),
+            dividend_proxy_months=int(os.getenv("DIVIDEND_PROXY_MONTHS", "12")),
+            dividend_history_months=int(os.getenv("DIVIDEND_HISTORY_MONTHS", "36")),
+            dividend_default_cycle_days=int(os.getenv("DIVIDEND_DEFAULT_CYCLE_DAYS", "365")),
+            dividend_no_info_discount=float(os.getenv("DIVIDEND_NO_INFO_DISCOUNT", "0.85")),
+            dividend_sparse_discount=float(os.getenv("DIVIDEND_SPARSE_DISCOUNT", "0.90")),
+            bond_allocation_pct=float(os.getenv("BOND_ALLOCATION_PCT", "20")),
+            bond_ticker=os.getenv("BOND_TICKER", "SBGB").upper(),
             inflation_annual_pct=float(os.getenv("INFLATION_ANNUAL_PCT", "8")),
         )

@@ -1,14 +1,24 @@
-"""Зачисление дивидендов в paper/backtest."""
+"""Зачисление дивидендов в paper/backtest.
+
+Только фактические выплаты MOEX на дату отсечки (registry_close).
+Начисляем, если на эту дату в портфеле есть акции — как у брокера на T+0 отсечки.
+Купил до отсечки → получишь; купил после → нет (до следующей выплаты).
+"""
 
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 
 from bot.config import Config
-from bot.data.moex_dividends import DividendEvent
+from bot.data.moex_dividends import DividendEvent, fetch_dividends
 from bot.portfolio.state import PortfolioState, SleeveState
 
 logger = logging.getLogger(__name__)
+
+
+def dividend_event_key(event: DividendEvent) -> str:
+    return f"{event.ticker}:{event.registry_close.isoformat()}"
 
 
 def apply_dividend(
@@ -53,4 +63,54 @@ def apply_daily_dividends(
     total = 0.0
     for ev in events:
         total += apply_dividend(state.core, "core", ev, config)
+    return total
+
+
+def process_dividends_through(
+    state: PortfolioState,
+    as_of: date,
+    config: Config,
+    *,
+    lookback_days: int = 14,
+) -> float:
+    """
+    Начисляет дивиденды по отсечкам от last_dividend_date до as_of.
+    Дубликаты отсекаются по paid_dividend_keys.
+    """
+    if not config.include_dividends:
+        return 0.0
+
+    tickers = list(state.core.positions.keys())
+    if not tickers:
+        state.last_dividend_date = as_of.isoformat()
+        return 0.0
+
+    start = date.fromisoformat(state.last_dividend_date) if state.last_dividend_date else (
+        as_of - timedelta(days=lookback_days)
+    )
+    if start > as_of:
+        start = as_of - timedelta(days=lookback_days)
+
+    fetch_start = start - timedelta(days=1)
+    total = 0.0
+    paid = set(state.paid_dividend_keys)
+
+    for ticker in tickers:
+        pos = state.core.positions.get(ticker)
+        if not pos or pos.qty <= 0:
+            continue
+        for ev in fetch_dividends(ticker, fetch_start, as_of):
+            if ev.registry_close < start or ev.registry_close > as_of:
+                continue
+            key = dividend_event_key(ev)
+            if key in paid:
+                continue
+            net = apply_dividend(state.core, "core", ev, config)
+            if net > 0:
+                paid.add(key)
+                state.paid_dividend_keys.append(key)
+                state.total_dividends_net_rub += net
+                total += net
+
+    state.last_dividend_date = as_of.isoformat()
     return total

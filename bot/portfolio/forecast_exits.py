@@ -10,6 +10,7 @@ from bot.analytics.growth_forecast import (
     load_model_weights,
     predict_return,
 )
+from bot.analytics.total_return import adjusted_total_return_pct, forecast_dividend_pct_1m
 from bot.config import Config
 from bot.data.fundamentals import fetch_fundamentals
 from bot.data.macro import MacroSnapshot, build_macro_snapshot
@@ -82,6 +83,8 @@ def apply_forecast_exits(
     commissions = 0.0
 
     for ticker in list(state.core.positions.keys()):
+        if ticker.upper() == config.bond_ticker.upper():
+            continue
         px = prices.get(ticker)
         series = histories.get(ticker)
         if not px or not series:
@@ -103,7 +106,12 @@ def apply_forecast_exits(
         if not feat:
             continue
 
-        forecast_pct = predict_return(feat, weights) * 100.0
+        price_fc_pct = predict_return(feat, weights) * 100.0
+        if config.include_dividends:
+            div_fc = forecast_dividend_pct_1m(ticker, px, as_of, config)
+            forecast_pct = adjusted_total_return_pct(price_fc_pct, div_fc, config)
+        else:
+            forecast_pct = price_fc_pct
         exit_ok, reason = should_exit_position(forecast_pct, value, config)
         if not exit_ok:
             logger.debug("%s: %s (fcst %+.1f%%)", ticker, reason, forecast_pct)

@@ -27,12 +27,20 @@ class ScanRow:
     ticker: str
     score: float
     forecast_1m_pct: float
+    price_forecast_1m_pct: float
+    dividend_forecast_1m_pct: float
+    dividend_announced_1m_pct: float
+    dividend_proxy_1m_pct: float
+    dividend_source: str
     momentum_6m_pct: float
     rs_vs_index_pct: float
     revenue_proxy_pct: float
     news_sentiment: float
     valtoday_mln: float
     last_price: float
+    dividend_payment_count: int = 0
+    dividend_cycle_days: float | None = None
+    dividend_info_discount: float = 1.0
 
 
 @dataclass
@@ -47,6 +55,7 @@ class ScanReport:
     strict_mode: bool = True
     macro_summary: str = ""
     min_forecast_pct: float = 1.0
+    fill_tier: str = ""
 
 
 def _liquidity_pool_from_snapshot(
@@ -56,6 +65,27 @@ def _liquidity_pool_from_snapshot(
     liquid = [s for s in snapshots if s.valtoday_rub >= config.min_daily_volume_rub]
     liquid.sort(key=lambda s: s.valtoday_rub, reverse=True)
     return [(s.ticker, s.valtoday_rub) for s in liquid[: config.scan_liquid_pool]]
+
+
+def liquid_pool_from_histories(
+    histories: dict[str, dict[date, OhlcBar]],
+    as_of: date,
+    config: Config,
+    *,
+    limit: int | None = None,
+) -> list[str]:
+    """Топ ликвидных на дату as_of — для walk-forward без look-ahead."""
+    cap = limit or config.scan_liquid_pool
+    scored: list[tuple[str, float]] = []
+    for ticker, series in histories.items():
+        days = sorted(d for d in series if d <= as_of)[-20:]
+        if len(days) < 10:
+            continue
+        avg_turn = sum(series[d].close * series[d].volume for d in days) / len(days)
+        if avg_turn >= config.min_daily_volume_rub:
+            scored.append((ticker, avg_turn))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [t for t, _ in scored[:cap]]
 
 
 def _load_histories_for_pool(
@@ -84,7 +114,7 @@ def scan_promising_stocks(
     month = as_of.strftime("%Y-%m")
 
     if histories:
-        pool_tickers = list(histories.keys())[: config.scan_liquid_pool]
+        pool_tickers = liquid_pool_from_histories(histories, as_of, config)
     else:
         pool_tickers = [t for t, _ in _liquidity_pool_from_snapshot(config)]
 
@@ -102,7 +132,7 @@ def scan_promising_stocks(
     from bot.data.macro import build_macro_snapshot
 
     macro = build_macro_snapshot(as_of, config.market_index)
-    ranked = rank_with_forecast(candidates, index_series, as_of, config, weights=weights)
+    ranked, fill_tier = rank_with_forecast(candidates, index_series, as_of, config, weights=weights)
 
     picks = [
         ScanRow(
@@ -110,6 +140,14 @@ def scan_promising_stocks(
             ticker=r.ticker,
             score=r.composite_score,
             forecast_1m_pct=r.forecast_1m_pct,
+            price_forecast_1m_pct=r.price_forecast_1m_pct,
+            dividend_forecast_1m_pct=r.dividend_forecast_1m_pct,
+            dividend_announced_1m_pct=r.dividend_announced_1m_pct,
+            dividend_proxy_1m_pct=r.dividend_proxy_1m_pct,
+            dividend_source=r.dividend_source,
+            dividend_payment_count=r.dividend_payment_count,
+            dividend_cycle_days=r.dividend_cycle_days,
+            dividend_info_discount=r.dividend_info_discount,
             momentum_6m_pct=round(r.features.mom_6m * 100, 2),
             rs_vs_index_pct=round(r.features.rs_vs_index_6m * 100, 2),
             revenue_proxy_pct=round(r.features.revenue_growth_proxy * 100, 2),
@@ -142,6 +180,7 @@ def scan_promising_stocks(
             f"ставка ЦБ {macro.cbr_key_rate_pct:.1f}%"
         ),
         min_forecast_pct=config.scan_min_forecast_pct,
+        fill_tier=fill_tier,
     )
 
 
@@ -156,6 +195,7 @@ def save_scan_report(report: ScanReport) -> Path:
                 "candidates_screened": report.candidates_screened,
                 "passed_filters": report.passed_filters,
                 "model_train_samples": report.model_samples,
+                "fill_tier": report.fill_tier,
                 "top_n": report.top_n,
                 "picks": [asdict(p) for p in report.picks],
             },
@@ -168,15 +208,17 @@ def save_scan_report(report: ScanReport) -> Path:
         f"MOEX GROWTH SCAN {report.month} (as of {report.as_of})",
         f"Pool: {report.candidates_screened} | Passed forecast+filters: {report.passed_filters}",
         f"Forecast model trained on {report.model_samples} samples",
+        f"Fill tier: {report.fill_tier or 'n/a'}",
         "",
-        f"{'#':>3} {'Tkr':<6} {'Fcst%':>7} {'Mom6m':>7} {'IMOEX':>7} {'Rev3m':>7} {'News':>5} {'VolM':>7} {'Sc':>6}",
-        "-" * 58,
+        f"{'#':>3} {'Tkr':<6} {'Tot%':>6} {'Px%':>6} {'Div%':>5} {'MOEX':>5} {'Prx%':>5} {'Mom6m':>7} {'IMOEX':>7} {'Sc':>6}",
+        "-" * 72,
     ]
     for p in report.picks:
         lines.append(
-            f"{p.rank:3d} {p.ticker:<6} {p.forecast_1m_pct:7.1f} {p.momentum_6m_pct:7.1f} "
-            f"{p.rs_vs_index_pct:7.1f} {p.revenue_proxy_pct:7.0f} {p.news_sentiment:5.2f} "
-            f"{p.valtoday_mln:7.1f} {p.score:6.2f}"
+            f"{p.rank:3d} {p.ticker:<6} {p.forecast_1m_pct:6.1f} {p.price_forecast_1m_pct:6.1f} "
+            f"{p.dividend_forecast_1m_pct:5.1f} {p.dividend_announced_1m_pct:5.1f} "
+            f"{p.dividend_proxy_1m_pct:5.1f} {p.momentum_6m_pct:7.1f} "
+            f"{p.rs_vs_index_pct:7.1f} {p.score:6.2f}"
         )
     txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -186,17 +228,32 @@ def print_scan_report(report: ScanReport) -> None:
     print("\n" + "=" * 64)
     print(f"MOEX GROWTH FORECAST SCAN — {report.month}")
     print("=" * 64)
-    print("Прогноз ~1 мес: цена/объём + макро (IMOEX, USD, ставка ЦБ) + фундаментал + новости MOEX")
+    print("Прогноз ~1 мес: цена + дивиденды (MOEX или прокси 12м) + макро + новости")
     mode = "СТРОГИЙ" if report.strict_mode else "обычный"
     print(f"Режим: {mode} | в рейтинг: {report.passed_filters} из {report.candidates_screened}")
-    print(f"Обучение модели: {report.model_samples} наблюдений\n")
+    print(f"Обучение модели: {report.model_samples} наблюдений | fill: {report.fill_tier or 'n/a'}\n")
     if report.macro_summary:
         print(f"Макро: {report.macro_summary}\n")
     for p in report.picks:
+        div_label = {
+            "moex": "MOEX",
+            "proxy": "прокси",
+            "none": "нет данных",
+        }.get(p.dividend_source, p.dividend_source)
+        disc = (
+            f" ×{p.dividend_info_discount:.2f}"
+            if p.dividend_info_discount < 0.999
+            else ""
+        )
+        cycle = (
+            f" цикл~{int(p.dividend_cycle_days)}д"
+            if p.dividend_cycle_days and p.dividend_cycle_days >= 180
+            else ""
+        )
         print(
-            f"  {p.rank:2d}. {p.ticker:<6}  прогноз {p.forecast_1m_pct:+.1f}%/мес  "
-            f"mom6m {p.momentum_6m_pct:+.1f}%  vs IMOEX {p.rs_vs_index_pct:+.1f}%  "
-            f"оборот3м {p.revenue_proxy_pct:+.0f}%  news {p.news_sentiment:.2f}"
+            f"  {p.rank:2d}. {p.ticker:<6}  total {p.forecast_1m_pct:+.1f}% "
+            f"(px {p.price_forecast_1m_pct:+.1f}% + div {p.dividend_forecast_1m_pct:.2f}% [{div_label}]{disc}{cycle})  "
+            f"выплат/36м {p.dividend_payment_count}  mom6m {p.momentum_6m_pct:+.1f}%"
         )
     if report.picks:
         print(f"\nCORE_UNIVERSE={','.join(p.ticker for p in report.picks)}")
