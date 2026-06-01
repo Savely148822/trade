@@ -475,3 +475,19 @@ body:not(.guest) #login-form,
 body:not(.guest) #register-form {
   display: none;
 }
+
+.exclusive-field {
+  overflow: hidden;
+  max-height: 120px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: max-height 220ms ease, opacity 180ms ease, transform 180ms ease, margin 180ms ease;
+}
+
+.exclusive-field.is-hidden {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+  margin: 0;
+  pointer-events: none;
+}

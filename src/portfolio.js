@@ -201,7 +201,7 @@ function validateSettings(input) {
 
 function validateTransaction(input) {
   const errors = [];
-  const type = input.type === 'sell' ? 'sell' : 'buy';
+  const type = input.type === 'sell' ? 'sell' : input.type === 'import' ? 'import' : 'buy';
   const ticker = normalizeTicker(input.ticker);
   const quantity = toFiniteNumber(input.quantity);
   const price = toFiniteNumber(input.price);
@@ -241,12 +241,13 @@ function tradeCashImpact(transaction, settings = {}) {
   const gross = (toFiniteNumber(transaction.quantity) || 0) * (toFiniteNumber(transaction.price) || 0);
   const commission = gross * commissionRate;
   const total = transaction.type === 'sell' ? gross - commission : gross + commission;
+  const signedCash = transaction.type === 'sell' ? total : transaction.type === 'import' ? 0 : -total;
 
   return {
     gross: roundMoney(gross),
     commission: roundMoney(commission),
     total: roundMoney(total),
-    signedCash: roundMoney(transaction.type === 'sell' ? total : -total)
+    signedCash: roundMoney(signedCash)
   };
 }
 
@@ -290,7 +291,7 @@ function buildPositions(transactions, quotes = {}, settings = {}) {
     existing.assetClass = tx.assetClass || existing.assetClass;
     existing.name = tx.name || existing.name;
 
-    if (tx.type === 'buy') {
+    if (tx.type === 'buy' || tx.type === 'import') {
       const impact = tradeCashImpact(tx, settings);
       existing.quantity += tx.quantity;
       existing.costBasis += impact.total;

@@ -227,3 +227,13 @@ test('daily analysis explains portfolio moves and market breadth', () => {
   assert.equal(analysis.portfolio.biggestImpacts[0].ticker, 'SBER');
   assert.ok(analysis.portfolio.biggestImpacts[0].reason.includes('ростом цены'));
 });
+
+test('imported existing holdings do not reduce manual cash balance', () => {
+  const imported = tx({ type: 'import', ticker: 'SBER', quantity: 2, price: 300 });
+  const cash = calculateCash([{ type: 'deposit', amount: 1000 }], [imported], settings);
+  const positions = buildPositions([imported], { SBER: quoted('SBER', 'blue_chips', { buyScore: 70, overboughtScore: 10 }, 320) }, settings);
+
+  assert.equal(cash.balance, 1000);
+  assert.equal(positions[0].quantity, 2);
+  assert.equal(positions[0].marketValue, 640);
+});

@@ -30,7 +30,7 @@ const refreshButton = document.querySelector('#refresh-market');
 document.addEventListener('DOMContentLoaded', async () => {
   const today = new Date().toISOString().slice(0, 10);
   depositForm.elements.date.value = today;
-  transactionForm.elements.date.value = today;
+  setupTransactionFormInteractions();
   await checkAuth();
   if (state.user) {
     await loadWatchlist();
@@ -135,9 +135,18 @@ transactionForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   setMessage(tradeMessage, 'Проверяю тикер на MOEX и цену сделки...');
 
-  const payload = Object.fromEntries(new FormData(transactionForm).entries());
+  const price = transactionForm.elements.price.value;
+  const date = transactionForm.elements.date.value;
+
+  if (!price && !date) {
+    setMessage(tradeMessage, 'Укажите либо точную цену покупки, либо дату для оценки цены через MOEX.', 'error');
+    return;
+  }
 
   try {
+    await syncTradeCommissionToSettings();
+    const payload = Object.fromEntries(new FormData(transactionForm).entries());
+    delete payload.tradeCommissionPercent;
     const response = await fetch('/api/transactions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -147,8 +156,10 @@ transactionForm.addEventListener('submit', async (event) => {
 
     if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
 
+    const commission = transactionForm.elements.tradeCommissionPercent.value;
     transactionForm.reset();
-    transactionForm.elements.date.value = new Date().toISOString().slice(0, 10);
+    transactionForm.elements.tradeCommissionPercent.value = commission;
+    updateExclusiveTradeFields();
     setMessage(tradeMessage, result.transaction.priceSource && result.transaction.priceSource !== 'manual' ? 'Сделка сохранена. Цена оценена по истории MOEX.' : 'Сделка сохранена. Класс инструмента определен автоматически.', 'ok');
     await loadPortfolio(true);
   } catch (error) {
@@ -156,6 +167,55 @@ transactionForm.addEventListener('submit', async (event) => {
   }
 });
 
+
+function setupTransactionFormInteractions() {
+  transactionForm.elements.price.addEventListener('input', updateExclusiveTradeFields);
+  transactionForm.elements.date.addEventListener('input', updateExclusiveTradeFields);
+  transactionForm.elements.tradeCommissionPercent.addEventListener('input', () => {
+    settingsForm.elements.commissionPercent.value = transactionForm.elements.tradeCommissionPercent.value;
+  });
+  updateExclusiveTradeFields();
+}
+
+function updateExclusiveTradeFields() {
+  const priceInput = transactionForm.elements.price;
+  const dateInput = transactionForm.elements.date;
+  const priceWrapper = transactionForm.querySelector('.exclusive-price');
+  const dateWrapper = transactionForm.querySelector('.exclusive-date');
+  const hasPrice = Boolean(priceInput.value);
+  const hasDate = Boolean(dateInput.value);
+
+  dateWrapper.classList.toggle('is-hidden', hasPrice);
+  priceWrapper.classList.toggle('is-hidden', hasDate);
+  dateInput.disabled = hasPrice;
+  priceInput.disabled = hasDate;
+}
+
+async function syncTradeCommissionToSettings() {
+  const tradeCommissionPercent = Number(transactionForm.elements.tradeCommissionPercent.value);
+  const settingsCommissionPercent = Number(settingsForm.elements.commissionPercent.value);
+
+  if (!Number.isFinite(tradeCommissionPercent) || tradeCommissionPercent < 0 || tradeCommissionPercent > 5) {
+    throw new Error('Комиссия брокера должна быть от 0 до 5%.');
+  }
+
+  if (tradeCommissionPercent === settingsCommissionPercent) return;
+
+  settingsForm.elements.commissionPercent.value = transactionForm.elements.tradeCommissionPercent.value;
+  const response = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      commissionRate: tradeCommissionPercent / 100,
+      accountType: 'iis3',
+      iisOpenDate: settingsForm.elements.iisOpenDate.value,
+      claimedDeductionYears: settingsForm.elements.claimedDeductionYears.value,
+      incomeTaxRate: Number(settingsForm.elements.incomeTaxPercent.value) / 100
+    })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
+}
 
 async function checkAuth() {
   try {
@@ -251,7 +311,9 @@ function render() {
 }
 
 function renderSettings(settings) {
-  settingsForm.elements.commissionPercent.value = formatPlainNumber((settings.commissionRate || 0) * 100, 3);
+  const commissionPercent = formatPlainNumber((settings.commissionRate || 0) * 100, 3);
+  settingsForm.elements.commissionPercent.value = commissionPercent;
+  transactionForm.elements.tradeCommissionPercent.value = commissionPercent;
   settingsForm.elements.iisOpenDate.value = settings.iisOpenDate || '';
   settingsForm.elements.claimedDeductionYears.value = (settings.claimedDeductionYears || []).join(', ');
   settingsForm.elements.incomeTaxPercent.value = formatPlainNumber((settings.incomeTaxRate || 0.13) * 100, 2);
@@ -522,7 +584,7 @@ function renderTransactions(transactions) {
 
   root.innerHTML = transactions
     .map((transaction) => {
-      const sign = transaction.type === 'sell' ? 'Продажа' : 'Покупка';
+      const sign = transaction.type === 'sell' ? 'Продажа' : transaction.type === 'import' ? 'Уже была' : 'Покупка';
       return `
         <article class="history-item">
           <div>

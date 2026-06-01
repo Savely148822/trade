@@ -112,7 +112,8 @@
             <label>
               Тип операции
               <select name="type">
-                <option value="buy">Купил</option>
+                <option value="buy">Купил сейчас</option>
+                <option value="import">Уже была в портфеле</option>
                 <option value="sell">Продал</option>
               </select>
             </label>
@@ -128,20 +129,25 @@
                 Количество, шт.
                 <input name="quantity" type="number" min="0" step="0.000001" required />
               </label>
-              <label>
+              <label class="exclusive-field exclusive-price">
                 Цена, ₽
-                <input name="price" type="number" min="0" step="0.01" placeholder="можно пусто" />
+                <input name="price" type="number" min="0" step="0.01" placeholder="точная цена из брокера" />
               </label>
             </div>
 
+            <label class="exclusive-field exclusive-date">
+              Дата покупки для оценки цены
+              <input name="date" type="date" />
+            </label>
+
             <label>
-              Дата
-              <input name="date" type="date" required />
+              Комиссия брокера, %
+              <input name="tradeCommissionPercent" type="number" min="0" max="5" step="0.001" value="0.06" />
             </label>
 
             <label>
               Заметка
-              <textarea name="notes" rows="2" placeholder="Если цена пустая, сервис возьмет примерную цену MOEX за дату сделки"></textarea>
+              <textarea name="notes" rows="2" placeholder="Укажите цену или дату. Если выбрать дату, сервис возьмет примерную цену MOEX за эту дату."></textarea>
             </label>
 
             <button class="button" type="submit">Запомнить бумагу/сделку</button>
