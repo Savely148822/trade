@@ -1,0 +1,7 @@
+portfolio.json
+service.json
+service.sqlite
+service.sqlite-*
+*.json
+*.sqlite
+*.sqlite-*

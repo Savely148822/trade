@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MOEX-портфель на всю жизнь</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="guest">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">MOEX ISS · локальный помощник инвестора</p>
+        <h1>MOEX-портфель на всю жизнь</h1>
+        <p class="hero__text">
+          Отмечай внесение рублей на брокерский счет, а бот анализирует российский рынок,
+          сам классифицирует инструмент и подсказывает: что докупить, чего не
+          трогать и что можно сократить.
+        </p>
+      </div>
+      <button id="refresh-market" class="button button--secondary" type="button">
+        Обновить рынок MOEX
+      </button>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <section class="panel auth-panel">
+          <h2>Вход в сервис</h2>
+          <div id="auth-user" class="auth-user"></div>
+          <form id="login-form" class="form">
+            <label>
+              Email
+              <input name="email" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              Пароль
+              <input name="password" type="password" autocomplete="current-password" required />
+            </label>
+            <button class="button" type="submit">Войти</button>
+          </form>
+          <form id="register-form" class="form auth-register">
+            <label>
+              Имя
+              <input name="name" autocomplete="name" required />
+            </label>
+            <label>
+              Email
+              <input name="email" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              Пароль
+              <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <button class="button button--secondary" type="submit">Зарегистрироваться</button>
+          </form>
+          <button id="logout-button" class="button button--secondary" type="button">Выйти</button>
+          <p id="auth-message" class="message" role="status"></p>
+        </section>
+
+        <section class="panel requires-auth">
+          <h2>Настройки брокера</h2>
+          <form id="settings-form" class="form">
+            <label>
+              Комиссия за сделку, %
+              <input name="commissionPercent" type="number" min="0" max="5" step="0.001" value="0.06" required />
+            </label>
+            <label>
+              Дата открытия ИИС-3
+              <input name="iisOpenDate" type="date" />
+            </label>
+            <label>
+              Уже полученные вычеты за годы
+              <input name="claimedDeductionYears" placeholder="2024, 2025" />
+            </label>
+            <label>
+              Ставка НДФЛ для оценки вычета, %
+              <input name="incomeTaxPercent" type="number" min="0" max="30" step="0.1" value="13" />
+            </label>
+            <label>
+              VK user id для уведомлений
+              <input name="vkUserId" placeholder="123456789" />
+            </label>
+            <label class="checkbox-label">
+              <input name="dailyNotifications" type="checkbox" />
+              Ежедневные VK-уведомления
+            </label>
+            <button class="button" type="submit">Сохранить настройки</button>
+            <p id="settings-message" class="message" role="status"></p>
+          </form>
+        </section>
+
+        <section class="panel requires-auth">
+          <h2>1. Отметить внесение средств</h2>
+          <form id="deposit-form" class="form">
+            <label>
+              Сумма, ₽
+              <input name="amount" type="number" min="1" step="0.01" placeholder="5000" required />
+            </label>
+
+            <label>
+              Дата
+              <input name="date" type="date" required />
+            </label>
+
+
+            <label>
+              Заметка
+              <textarea name="notes" rows="2" placeholder="Зарплата, довнесение, кэш..."></textarea>
+            </label>
+
+            <button class="button" type="submit">Я внес рубли у брокера</button>
+            <p id="deposit-message" class="message" role="status"></p>
+          </form>
+          <form id="balance-correction-form" class="form correction-form">
+            <h3>Исправить расчетный кэш</h3>
+            <label>
+              Фактически доступно у брокера, ₽
+              <input name="amount" type="number" min="0" step="0.01" placeholder="8420.50" required />
+            </label>
+            <label>
+              Комментарий
+              <textarea name="notes" rows="2" placeholder="Например: сверил с брокером"></textarea>
+            </label>
+            <button class="button button--secondary" type="submit">Исправить кэш</button>
+            <p id="balance-correction-message" class="message" role="status"></p>
+          </form>
+
+        </section>
+
+        <section class="panel requires-auth">
+          <h2>2. Записать бумагу или сделку</h2>
+          <form id="transaction-form" class="form">
+            <label>
+              Тип операции
+              <select name="type">
+                <option value="buy">Купил сейчас</option>
+                <option value="import">Уже была в портфеле</option>
+                <option value="sell">Продал</option>
+              </select>
+            </label>
+
+            <label>
+              Тикер Мосбиржи
+              <input name="ticker" list="ticker-list" placeholder="SBER" required />
+              <datalist id="ticker-list"></datalist>
+            </label>
+
+            <div class="form__row">
+              <label>
+                Количество, шт.
+                <input name="quantity" type="number" min="0" step="0.000001" required />
+              </label>
+              <label class="exclusive-field exclusive-price">
+                Цена, ₽
+                <input name="price" type="number" min="0" step="0.01" placeholder="точная цена из брокера" />
+              </label>
+            </div>
+
+            <label class="exclusive-field exclusive-date">
+              Дата покупки для оценки цены
+              <input name="date" type="date" />
+            </label>
+
+            <label>
+              Комиссия брокера, %
+              <input name="tradeCommissionPercent" type="number" min="0" max="5" step="0.001" value="0.06" />
+            </label>
+
+            <label>
+              Заметка
+              <textarea name="notes" rows="2" placeholder="Укажите цену или дату. Если выбрать дату, сервис возьмет примерную цену MOEX за эту дату."></textarea>
+            </label>
+
+            <button class="button" type="submit">Запомнить бумагу/сделку</button>
+            <p id="trade-message" class="message" role="status"></p>
+          </form>
+        </section>
+        <section class="panel requires-auth">
+          <h2>3. План вывода с ИИС-3</h2>
+          <form id="withdrawal-form" class="form">
+            <label>
+              Сколько хочу вывести, ₽
+              <input name="amount" type="number" min="1" step="0.01" placeholder="100000" required />
+            </label>
+            <button class="button" type="submit">Подобрать бумаги к продаже</button>
+            <p id="withdrawal-message" class="message" role="status"></p>
+          </form>
+        </section>
+
+      </aside>
+
+      <section class="dashboard requires-auth">
+        <section class="cards" aria-label="Итоги">
+          <article class="card card--accent">
+            <span>Доступный кэш по вашим данным</span>
+            <strong id="cash-balance">0 ₽</strong>
+          </article>
+          <article class="card">
+            <span>Позиции</span>
+            <strong id="invested-value">0 ₽</strong>
+          </article>
+          <article class="card">
+            <span>Всего с кешем</span>
+            <strong id="assets-with-cash">0 ₽</strong>
+          </article>
+          <article class="card">
+            <span>Прибыль / убыток</span>
+            <strong id="total-pnl">0 ₽</strong>
+          </article>
+        </section>
+
+        
+        <section class="panel">
+          <div class="panel__header">
+            <div>
+              <h2>Ежедневный анализ</h2>
+              <p>Краткий отчет для будущей VK-рассылки: рынок, портфель, причины роста/падения и действия.</p>
+            </div>
+          </div>
+          <div id="daily-analysis" class="daily-analysis"></div>
+        </section>
+
+        <section class="panel recommendation-panel">
+          <div class="panel__header">
+            <div>
+              <h2>Что сделать сейчас</h2>
+              <p>Покупки и продажи ранжируются по структуре 70/20/10, цене лота, комиссии и скорингу MOEX.</p>
+            </div>
+          </div>
+          <div id="recommendations" class="recommendations"></div>
+        </section>
+
+        
+        <section class="panel">
+          <div class="panel__header">
+            <div>
+              <h2>План вывода</h2>
+              <p>Сначала используется свободный кеш, затем бумаги с лучшим сочетанием выгоды, перегрева и налогового риска.</p>
+            </div>
+          </div>
+          <div id="withdrawal-plan" class="history-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <div>
+              <h2>План 70/20/10</h2>
+              <p>Сначала голубые фишки, потом ОФЗ, потом ростовые идеи.</p>
+            </div>
+          </div>
+          <div id="allocation" class="allocation"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <div>
+              <h2>Позиции</h2>
+              <p id="market-status">Источник данных: MOEX ISS.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Тикер</th>
+                  <th>Класс</th>
+                  <th>Кол-во</th>
+                  <th>Средняя</th>
+                  <th>Рынок</th>
+                  <th>Стоимость</th>
+                  <th>P/L</th>
+                  <th>Скоринг</th>
+                </tr>
+              </thead>
+              <tbody id="positions"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="history-grid">
+          <section class="panel">
+            <div class="panel__header">
+              <div>
+                <h2>Ручные отметки внесения средств</h2>
+                <p>Свободные рубли для будущих покупок.</p>
+              </div>
+            </div>
+            <div id="cash-history" class="history-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel__header">
+              <div>
+                <h2>Сделки</h2>
+                <p>Покупки уменьшают расчетный кэш с комиссией, продажи увеличивают его за вычетом комиссии.</p>
+              </div>
+            </div>
+            <div id="transactions" class="history-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer-links">
+      <a href="/disclaimer.html">Дисклеймер</a>
+      <a href="/privacy.html">Политика приватности</a>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

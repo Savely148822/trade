@@ -1,0 +1,250 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const {
+  buildDailyAnalysis,
+  buildIisSummary,
+  buildPortfolio,
+  buildPositions,
+  buildWithdrawalPlan,
+  calculateCash,
+  classifyInstrument,
+  scoreInstrument,
+  tradeCashImpact,
+  validateSettings,
+  validateTransaction
+} = require('../src/portfolio');
+
+const settings = { commissionRate: 0.0006, accountType: 'iis3', iisOpenDate: '2024-01-15', incomeTaxRate: 0.13, iisMinYears: 5, iisProfitExemptionYears: 10 };
+
+test('cash balance accounts for broker commission on buy and sell', () => {
+  const buy = tx({ type: 'buy', ticker: 'SBER', quantity: 10, price: 300 });
+  const sell = tx({ type: 'sell', ticker: 'SBER', quantity: 2, price: 350 });
+  const cash = calculateCash([{ type: 'deposit', amount: 10000 }], [buy, sell], settings);
+
+  assert.equal(tradeCashImpact(buy, settings).total, 3001.8);
+  assert.equal(tradeCashImpact(sell, settings).total, 699.58);
+  assert.equal(cash.balance, 7697.78);
+});
+
+test('buildPositions includes buy commission in cost basis', () => {
+  const positions = buildPositions(
+    [
+      tx({ ticker: 'SBER', quantity: 10, price: 250 }),
+      tx({ ticker: 'SBER', quantity: 10, price: 350 }),
+      tx({ type: 'sell', ticker: 'SBER', quantity: 5, price: 360 })
+    ],
+    {
+      SBER: { price: 400, currency: 'RUB', asOf: '2026-01-01T00:00:00.000Z', source: 'test' }
+    },
+    settings
+  );
+
+  assert.equal(positions.length, 1);
+  assert.equal(positions[0].quantity, 15);
+  assert.equal(positions[0].averagePrice, 300.18);
+  assert.equal(positions[0].marketValue, 6000);
+  assert.equal(positions[0].unrealizedPnl, 1497.3);
+});
+
+test('new cash recommends the best blue chip candidate first', () => {
+  const portfolio = buildPortfolio(
+    [],
+    {
+      SBER: quoted('SBER', 'blue_chips', { buyScore: 88, overboughtScore: 10 }),
+      GAZP: quoted('GAZP', 'blue_chips', { buyScore: 55, overboughtScore: 20 })
+    },
+    settings,
+    [{ type: 'deposit', amount: 5000 }]
+  );
+
+  assert.equal(portfolio.cash.balance, 5000);
+  assert.equal(portfolio.recommendations.at(-1).action, 'buy');
+  assert.equal(portfolio.recommendations.at(-1).phase, 'blue_chips');
+  assert.equal(portfolio.recommendations.at(-1).candidates[0].symbol, 'SBER');
+});
+
+test('overweight and overbought positions produce a sell idea', () => {
+  const portfolio = buildPortfolio(
+    [tx({ ticker: 'SBER', quantity: 20, price: 300 })],
+    {
+      SBER: quoted('SBER', 'blue_chips', { buyScore: 25, overboughtScore: 85 }, 400)
+    },
+    settings,
+    [{ type: 'deposit', amount: 7000 }]
+  );
+
+  assert.ok(portfolio.recommendations.some((item) => item.action === 'sell' && item.candidates[0].symbol === 'SBER'));
+});
+
+test('classifyInstrument separates bonds, blue chips and growth shares', () => {
+  assert.equal(classifyInstrument({ symbol: 'SU26243RMFS4', market: 'bonds' }), 'bonds');
+  assert.equal(classifyInstrument({ symbol: 'SBER', market: 'shares' }, ['SBER']), 'blue_chips');
+  assert.equal(classifyInstrument({ symbol: 'WUSH', market: 'shares' }, ['SBER']), 'growth');
+});
+
+test('scoreInstrument penalizes overbought shares', () => {
+  const score = scoreInstrument({
+    symbol: 'TEST',
+    assetClass: 'growth',
+    market: 'shares',
+    pricePosition52w: 0.97,
+    return20d: 0.3,
+    turnover: 1_000_000,
+    spreadPercent: 0.01,
+    listLevel: 1
+  });
+
+  assert.ok(score.overboughtScore >= 70);
+  assert.ok(score.buyScore < 60);
+});
+
+test('settings and transaction validation enforce RUB MOEX workflow', () => {
+  const invalidSettings = validateSettings({ commissionRate: -1 });
+  const invalidTransaction = validateTransaction({ ticker: 'AAPL', quantity: 1, price: 100, currency: 'USD' });
+
+  assert.equal(invalidSettings.valid, false);
+  assert.equal(invalidTransaction.valid, false);
+  assert.ok(invalidTransaction.errors.includes('Тикер должен быть найден на Московской бирже.'));
+  assert.ok(invalidTransaction.errors.includes('Сейчас поддерживается только рублевая торговля на Мосбирже.'));
+});
+
+function tx(overrides = {}) {
+  return {
+    id: `test-${Math.random()}`,
+    type: 'buy',
+    ticker: 'SBER',
+    name: 'Сбербанк',
+    assetClass: 'blue_chips',
+    quantity: 1,
+    price: 100,
+    currency: 'RUB',
+    date: '2026-01-01',
+    notes: '',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    moexVerified: true,
+    ...overrides
+  };
+}
+
+function quoted(symbol, assetClass, analysis, price = 300) {
+  return {
+    symbol,
+    name: symbol,
+    assetClass,
+    price,
+    lotSize: 1,
+    lotCost: price,
+    source: 'test',
+    asOf: '2026-01-01T00:00:00.000Z',
+    analysis
+  };
+}
+
+test('IIS summary reminds to claim deduction for previous unclaimed contribution year', () => {
+  const summary = buildIisSummary(
+    [{ type: 'deposit', amount: 400000, date: '2025-06-01' }],
+    { ...settings, claimedDeductionYears: [] },
+    new Date('2026-02-01T00:00:00.000Z')
+  );
+
+  assert.equal(summary.pendingDeductionYears.length, 1);
+  assert.equal(summary.pendingDeductionYears[0].year, 2025);
+  assert.equal(summary.pendingDeductionYears[0].estimatedRefund, 52000);
+  assert.equal(summary.canCloseWithoutDeductionClawback, false);
+});
+
+test('withdrawal plan prefers low-tax loss position before profitable IIS position', () => {
+  const portfolio = buildPortfolio(
+    [
+      tx({ ticker: 'SBER', quantity: 10, price: 350 }),
+      tx({ ticker: 'GAZP', quantity: 10, price: 200 })
+    ],
+    {
+      SBER: quoted('SBER', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300),
+      GAZP: quoted('GAZP', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300)
+    },
+    settings,
+    [{ type: 'deposit', amount: 10000, date: '2025-01-01' }]
+  );
+
+  const plan = buildWithdrawalPlan({
+    amount: 2500,
+    positions: portfolio.positions,
+    quotes: {
+      SBER: quoted('SBER', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300),
+      GAZP: quoted('GAZP', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300)
+    },
+    allocation: portfolio.allocation,
+    cash: { balance: 0 },
+    settings,
+    iisSummary: portfolio.iis
+  });
+
+  assert.equal(plan.valid, true);
+  assert.equal(plan.sales[0].ticker, 'SBER');
+  assert.equal(plan.sales[0].taxRisk, 'low');
+  assert.ok(plan.warnings.some((warning) => warning.includes('ИИС-3')));
+});
+
+test('daily analysis explains portfolio moves and market breadth', () => {
+  const portfolio = buildPortfolio(
+    [tx({ ticker: 'SBER', quantity: 10, price: 300 })],
+    {
+      SBER: {
+        ...quoted('SBER', 'blue_chips', { buyScore: 70, overboughtScore: 10 }, 330),
+        changePercent: 0.02,
+        turnover: 600000000
+      },
+      GAZP: {
+        ...quoted('GAZP', 'blue_chips', { buyScore: 45, overboughtScore: 20 }, 160),
+        symbol: 'GAZP',
+        changePercent: -0.03
+      }
+    },
+    settings,
+    [{ type: 'deposit', amount: 10000, date: '2025-01-01' }]
+  );
+
+  const analysis = buildDailyAnalysis(portfolio, {
+    SBER: {
+      ...quoted('SBER', 'blue_chips', { buyScore: 70, overboughtScore: 10 }, 330),
+      changePercent: 0.02,
+      turnover: 600000000
+    },
+    GAZP: {
+      ...quoted('GAZP', 'blue_chips', { buyScore: 45, overboughtScore: 20 }, 160),
+      symbol: 'GAZP',
+      changePercent: -0.03
+    }
+  });
+
+  assert.ok(analysis.headline.includes('портфель вырос'));
+  assert.equal(analysis.market.advancing, 1);
+  assert.equal(analysis.market.declining, 1);
+  assert.equal(analysis.portfolio.biggestImpacts[0].ticker, 'SBER');
+  assert.ok(analysis.portfolio.biggestImpacts[0].reason.includes('ростом цены'));
+});
+
+test('imported existing holdings do not reduce manual cash balance', () => {
+  const imported = tx({ type: 'import', ticker: 'SBER', quantity: 2, price: 300 });
+  const cash = calculateCash([{ type: 'deposit', amount: 1000 }], [imported], settings);
+  const positions = buildPositions([imported], { SBER: quoted('SBER', 'blue_chips', { buyScore: 70, overboughtScore: 10 }, 320) }, settings);
+
+  assert.equal(cash.balance, 1000);
+  assert.equal(positions[0].quantity, 2);
+  assert.equal(positions[0].marketValue, 640);
+});
+
+test('manual cash adjustment corrects calculated balance by delta', () => {
+  const cash = calculateCash([
+    { type: 'deposit', amount: 5000 },
+    { type: 'adjustment', amount: -750, targetBalance: 4250 }
+  ], [], settings);
+
+  assert.equal(cash.deposited, 5000);
+  assert.equal(cash.adjustments, -750);
+  assert.equal(cash.balance, 4250);
+});
