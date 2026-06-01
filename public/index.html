@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Портфель на всю жизнь</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Локальный помощник инвестора</p>
+        <h1>Портфель на всю жизнь</h1>
+        <p class="hero__text">
+          Записывай покупки и продажи, смотри текущую стоимость портфеля,
+          прибыль по позициям и подсказки по ребалансу 70/20/10.
+        </p>
+      </div>
+      <button id="refresh-market" class="button button--secondary" type="button">
+        Обновить цены рынка
+      </button>
+    </header>
+
+    <main class="layout">
+      <section class="panel panel--form">
+        <h2>Добавить сделку</h2>
+        <form id="transaction-form" class="form">
+          <label>
+            Тип операции
+            <select name="type">
+              <option value="buy">Купил</option>
+              <option value="sell">Продал</option>
+            </select>
+          </label>
+
+          <label>
+            Тикер
+            <input name="ticker" placeholder="AAPL, MSFT, BND..." required />
+          </label>
+
+          <label>
+            Название
+            <input name="name" placeholder="Apple" />
+          </label>
+
+          <label>
+            Категория
+            <select name="assetClass">
+              <option value="blue_chips">Голубые фишки (70%)</option>
+              <option value="bonds">Облигации (20%)</option>
+              <option value="growth">Быстрорастущие (10%)</option>
+            </select>
+          </label>
+
+          <div class="form__row">
+            <label>
+              Количество
+              <input name="quantity" type="number" min="0" step="0.000001" required />
+            </label>
+            <label>
+              Цена сделки
+              <input name="price" type="number" min="0" step="0.01" required />
+            </label>
+          </div>
+
+          <div class="form__row">
+            <label>
+              Валюта
+              <input name="currency" value="USD" maxlength="3" required />
+            </label>
+            <label>
+              Дата
+              <input name="date" type="date" required />
+            </label>
+          </div>
+
+          <label>
+            Заметка
+            <textarea name="notes" rows="3" placeholder="Почему покупаю, горизонт, риск..."></textarea>
+          </label>
+
+          <button class="button" type="submit">Запомнить сделку</button>
+          <p id="form-message" class="message" role="status"></p>
+        </form>
+      </section>
+
+      <section class="dashboard">
+        <section class="cards" aria-label="Итоги портфеля">
+          <article class="card">
+            <span>Стоимость</span>
+            <strong id="total-value">0</strong>
+          </article>
+          <article class="card">
+            <span>Вложено</span>
+            <strong id="total-cost">0</strong>
+          </article>
+          <article class="card">
+            <span>Прибыль / убыток</span>
+            <strong id="total-pnl">0</strong>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <h2>Структура 70/20/10</h2>
+            <p>Цель: 70% голубые фишки, 20% облигации, 10% рост.</p>
+          </div>
+          <div id="allocation" class="allocation"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <h2>Рекомендации</h2>
+            <p>Это подсказки по структуре, а не индивидуальная инвестиционная рекомендация.</p>
+          </div>
+          <div id="recommendations" class="recommendations"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <h2>Позиции</h2>
+            <p id="market-status">Рыночные данные загружаются через локальный сервер.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Тикер</th>
+                  <th>Категория</th>
+                  <th>Кол-во</th>
+                  <th>Средняя</th>
+                  <th>Рынок</th>
+                  <th>Стоимость</th>
+                  <th>P/L</th>
+                </tr>
+              </thead>
+              <tbody id="positions"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <h2>История сделок</h2>
+            <p>Хранится локально в файле data/portfolio.json.</p>
+          </div>
+          <div id="transactions" class="transactions"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "lifetime-portfolio",
+  "version": "0.1.0",
+  "description": "Local long-term portfolio assistant with market data and rebalancing guidance.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "portfolio",
+    "investing",
+    "rebalance",
+    "local-app"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
