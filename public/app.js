@@ -108,7 +108,7 @@ withdrawalForm.addEventListener('submit', async (event) => {
 
 depositForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  setMessage(depositMessage, 'Сохраняю пополнение...');
+  setMessage(depositMessage, 'Сохраняю ручной сигнал о внесении средств...');
 
   const payload = Object.fromEntries(new FormData(depositForm).entries());
 
@@ -124,7 +124,7 @@ depositForm.addEventListener('submit', async (event) => {
 
     depositForm.reset();
     depositForm.elements.date.value = new Date().toISOString().slice(0, 10);
-    setMessage(depositMessage, 'Баланс пополнен.', 'ok');
+    setMessage(depositMessage, 'Сигнал о внесении средств сохранен.', 'ok');
     await loadPortfolio();
   } catch (error) {
     setMessage(depositMessage, error.message, 'error');
@@ -377,7 +377,7 @@ function actionLabel(action) {
     buy: 'Докупить',
     sell: 'Продать/сократить',
     wait: 'Подождать',
-    deposit: 'Пополнить',
+    deposit: 'Отметить средства',
     tax: 'ИИС-3 / налоги'
   }[action] || action;
 }
@@ -449,7 +449,7 @@ function renderPositions(positions) {
   const marketStatus = document.querySelector('#market-status');
 
   if (positions.length === 0) {
-    root.innerHTML = '<tr><td colspan="8">Пока нет позиций. Сначала пополните баланс, затем купите предложенный инструмент.</td></tr>';
+    root.innerHTML = '<tr><td colspan="8">Пока нет позиций. Сначала отметьте внесение средств у брокера, затем купите предложенный инструмент.</td></tr>';
     marketStatus.textContent = 'Источник данных: MOEX ISS. Позиции появятся после первой сделки.';
     return;
   }
@@ -490,7 +490,7 @@ function renderCashHistory(cashMovements) {
   const root = document.querySelector('#cash-history');
 
   if (!cashMovements.length) {
-    root.innerHTML = '<p class="message">Пополнений пока нет.</p>';
+    root.innerHTML = '<p class="message">Ручных отметок внесения средств пока нет.</p>';
     return;
   }
 
@@ -545,7 +545,7 @@ function renderTransactions(transactions) {
 }
 
 async function deleteCashDeposit(id) {
-  if (!confirm('Удалить пополнение баланса?')) return;
+  if (!confirm('Удалить ручную отметку внесения средств?')) return;
 
   const response = await fetch(`/api/cash/deposits/${encodeURIComponent(id)}`, {
     method: 'DELETE'

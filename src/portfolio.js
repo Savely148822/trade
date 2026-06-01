@@ -158,7 +158,7 @@ function validateCashDeposit(input) {
   const errors = [];
   const amount = toFiniteNumber(input.amount);
 
-  if (!amount || amount <= 0) errors.push('Сумма пополнения должна быть больше 0.');
+  if (!amount || amount <= 0) errors.push('Сумма ручного внесения средств должна быть больше 0.');
 
   return {
     valid: errors.length === 0,
@@ -757,8 +757,8 @@ function buildRecommendations(positions, allocation, cash, totalAssets, quotes =
   if (cash.balance <= 0) {
     recommendations.push({
       action: 'deposit',
-      title: 'Пополните рублевый баланс',
-      detail: 'Свободных рублей нет. После пополнения бот выберет следующий инструмент на Мосбирже.',
+      title: 'Отметьте внесение рублей у брокера',
+      detail: 'По вашим ручным данным свободных рублей нет. После отметки внесения средств бот выберет следующий инструмент на Мосбирже.',
       phase: null,
       candidates: []
     });
@@ -784,7 +784,7 @@ function buildRecommendations(positions, allocation, cash, totalAssets, quotes =
     recommendations.push({
       action: 'wait',
       title: `Копим на первый лот: ${TARGET_ALLOCATION[phase].label}`,
-      detail: `Следующий этап — ${TARGET_ALLOCATION[phase].label}. На балансе ${roundMoney(cash.balance)} RUB, а самый доступный лот с комиссией стоит около ${roundMoney(candidate.lotCostWithCommission)} RUB.`,
+      detail: `Следующий этап — ${TARGET_ALLOCATION[phase].label}. По ручному сигналу доступно ${roundMoney(cash.balance)} RUB, а самый доступный лот с комиссией стоит около ${roundMoney(candidate.lotCostWithCommission)} RUB.`,
       phase,
       missingAmount: roundMoney(candidate.lotCostWithCommission - cash.balance),
       candidates: [candidate.instrument]

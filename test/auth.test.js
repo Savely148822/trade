@@ -7,7 +7,7 @@ const test = require('node:test');
 
 const { server } = require('../server');
 
-const storePath = path.join(__dirname, '..', 'data', 'service.json');
+const storePath = path.join(__dirname, '..', 'data', 'service.sqlite');
 
 test('service auth protects portfolio data per user', async () => {
   await fs.rm(storePath, { force: true });
@@ -29,13 +29,17 @@ test('service auth protects portfolio data per user', async () => {
     assert.equal(firstDeposit.status, 201);
     assert.equal(secondDeposit.status, 201);
 
-    const raw = await fs.readFile(storePath, 'utf8');
-    const store = JSON.parse(raw);
-    const first = store.users.find((user) => user.email === 'first@example.com');
-    const second = store.users.find((user) => user.email === 'second@example.com');
+    const Database = require('better-sqlite3');
+    const database = new Database(storePath, { readonly: true });
+    const rows = database.prepare('SELECT email, portfolio_json FROM users ORDER BY email').all();
+    database.close();
+    const first = rows.find((user) => user.email === 'first@example.com');
+    const second = rows.find((user) => user.email === 'second@example.com');
+    const firstPortfolio = JSON.parse(first.portfolio_json);
+    const secondPortfolio = JSON.parse(second.portfolio_json);
 
-    assert.equal(first.portfolio.cashMovements[0].amount, 5000);
-    assert.equal(second.portfolio.cashMovements[0].amount, 12000);
+    assert.equal(firstPortfolio.cashMovements[0].amount, 5000);
+    assert.equal(secondPortfolio.cashMovements[0].amount, 12000);
   } finally {
     await closeServer();
     await fs.rm(storePath, { force: true });

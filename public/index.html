@@ -12,7 +12,7 @@
         <p class="eyebrow">MOEX ISS · локальный помощник инвестора</p>
         <h1>MOEX-портфель на всю жизнь</h1>
         <p class="hero__text">
-          Пополняй рублевый баланс, а бот анализирует российский рынок,
+          Отмечай внесение рублей на брокерский счет, а бот анализирует российский рынок,
           сам классифицирует инструмент и подсказывает: что докупить, чего не
           трогать и что можно сократить.
         </p>
@@ -82,7 +82,7 @@
         </section>
 
         <section class="panel requires-auth">
-          <h2>1. Пополнить баланс</h2>
+          <h2>1. Отметить внесение средств</h2>
           <form id="deposit-form" class="form">
             <label>
               Сумма, ₽
@@ -99,7 +99,7 @@
               <textarea name="notes" rows="2" placeholder="Зарплата, довнесение, кэш..."></textarea>
             </label>
 
-            <button class="button" type="submit">Положил рубли на баланс</button>
+            <button class="button" type="submit">Я внес рубли у брокера</button>
             <p id="deposit-message" class="message" role="status"></p>
           </form>
         </section>
@@ -163,7 +163,7 @@
       <section class="dashboard requires-auth">
         <section class="cards" aria-label="Итоги">
           <article class="card card--accent">
-            <span>Свободный баланс</span>
+            <span>Доступный кэш по вашим данным</span>
             <strong id="cash-balance">0 ₽</strong>
           </article>
           <article class="card">
@@ -252,7 +252,7 @@
           <section class="panel">
             <div class="panel__header">
               <div>
-                <h2>Пополнения</h2>
+                <h2>Ручные отметки внесения средств</h2>
                 <p>Свободные рубли для будущих покупок.</p>
               </div>
             </div>
@@ -263,7 +263,7 @@
             <div class="panel__header">
               <div>
                 <h2>Сделки</h2>
-                <p>Покупки списывают баланс с комиссией, продажи возвращают рубли за вычетом комиссии.</p>
+                <p>Покупки уменьшают расчетный кэш с комиссией, продажи увеличивают его за вычетом комиссии.</p>
               </div>
             </div>
             <div id="transactions" class="history-list"></div>

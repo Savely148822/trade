@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const Database = require('better-sqlite3');
 const { URL } = require('node:url');
 
 const {
@@ -25,7 +26,7 @@ const {
 } = require('./src/portfolio');
 
 const PORT = Number(process.env.PORT || 3000);
-const STORE_FILE = path.join(__dirname, 'data', 'service.json');
+const STORE_FILE = path.join(__dirname, 'data', 'service.sqlite');
 const APP_SECRET = process.env.APP_SECRET || 'dev-secret-change-me';
 const SESSION_COOKIE = 'portfolio_session';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -61,25 +62,76 @@ function createDefaultPortfolio() {
 }
 
 async function loadStore() {
-  await fs.mkdir(path.dirname(STORE_FILE), { recursive: true });
-
+  const database = await openDatabase();
   try {
-    const raw = await fs.readFile(STORE_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
+    const rows = database.prepare('SELECT id, email, name, password_hash, password_salt, created_at, portfolio_json FROM users ORDER BY created_at').all();
     return {
-      users: Array.isArray(parsed.users) ? parsed.users.map(normalizeStoredUser) : []
+      users: rows.map((row) => normalizeStoredUser({
+        id: row.id,
+        email: row.email,
+        name: row.name,
+        passwordHash: row.password_hash,
+        passwordSalt: row.password_salt,
+        createdAt: row.created_at,
+        portfolio: safeJsonParse(row.portfolio_json, {})
+      }))
     };
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    const store = { users: [] };
-    await saveStore(store);
-    return store;
+  } finally {
+    database.close();
   }
 }
 
 async function saveStore(store) {
+  const database = await openDatabase();
+  try {
+    const upsert = database.prepare(
+      'INSERT INTO users (id, email, name, password_hash, password_salt, created_at, portfolio_json) VALUES (@id, @email, @name, @passwordHash, @passwordSalt, @createdAt, @portfolioJson) ' +
+      'ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, password_hash = excluded.password_hash, password_salt = excluded.password_salt, portfolio_json = excluded.portfolio_json'
+    );
+    const write = database.transaction((users) => {
+      for (const user of users) {
+        upsert.run({
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          passwordHash: user.passwordHash,
+          passwordSalt: user.passwordSalt,
+          createdAt: user.createdAt,
+          portfolioJson: JSON.stringify(normalizePortfolio(user.portfolio))
+        });
+      }
+    });
+    write(store.users || []);
+  } finally {
+    database.close();
+  }
+}
+
+async function openDatabase() {
   await fs.mkdir(path.dirname(STORE_FILE), { recursive: true });
-  await fs.writeFile(STORE_FILE, JSON.stringify(store, null, 2) + '\n');
+  const database = new Database(STORE_FILE);
+  database.pragma('journal_mode = WAL');
+  database.pragma('foreign_keys = ON');
+  database.exec(
+    'CREATE TABLE IF NOT EXISTS users (' +
+      'id TEXT PRIMARY KEY, ' +
+      'email TEXT NOT NULL UNIQUE, ' +
+      'name TEXT NOT NULL, ' +
+      'password_hash TEXT NOT NULL, ' +
+      'password_salt TEXT NOT NULL, ' +
+      'created_at TEXT NOT NULL, ' +
+      'portfolio_json TEXT NOT NULL' +
+    ')'
+  );
+  return database;
+}
+
+function safeJsonParse(value, fallback) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function normalizeStoredUser(user) {
