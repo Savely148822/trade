@@ -433,3 +433,24 @@ small {
     grid-template-columns: 1fr;
   }
 }
+
+.order-box--sell {
+  border-color: rgba(248, 81, 73, 0.45);
+  background: rgba(248, 81, 73, 0.12);
+}
+
+details {
+  margin-top: 0.6rem;
+  color: var(--muted);
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 800;
+}
+
+details ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+}

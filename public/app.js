@@ -11,8 +11,10 @@ const assetLabels = {
   growth: 'Рост'
 };
 
+const settingsForm = document.querySelector('#settings-form');
 const depositForm = document.querySelector('#deposit-form');
 const transactionForm = document.querySelector('#transaction-form');
+const settingsMessage = document.querySelector('#settings-message');
 const depositMessage = document.querySelector('#deposit-message');
 const tradeMessage = document.querySelector('#trade-message');
 const refreshButton = document.querySelector('#refresh-market');
@@ -26,6 +28,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 refreshButton.addEventListener('click', () => loadPortfolio(true));
+
+settingsForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const commissionPercent = Number(settingsForm.elements.commissionPercent.value);
+
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ commissionRate: commissionPercent / 100 })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
+    setMessage(settingsMessage, 'Комиссия сохранена.', 'ok');
+    await loadPortfolio();
+  } catch (error) {
+    setMessage(settingsMessage, error.message, 'error');
+  }
+});
 
 depositForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -45,7 +66,7 @@ depositForm.addEventListener('submit', async (event) => {
 
     depositForm.reset();
     depositForm.elements.date.value = new Date().toISOString().slice(0, 10);
-    setMessage(depositMessage, 'Баланс пополнен. Смотрите блок “Что купить сейчас”.', 'ok');
+    setMessage(depositMessage, 'Баланс пополнен.', 'ok');
     await loadPortfolio();
   } catch (error) {
     setMessage(depositMessage, error.message, 'error');
@@ -54,7 +75,7 @@ depositForm.addEventListener('submit', async (event) => {
 
 transactionForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  setMessage(tradeMessage, 'Сохраняю сделку...');
+  setMessage(tradeMessage, 'Проверяю тикер на MOEX и сохраняю сделку...');
 
   const payload = Object.fromEntries(new FormData(transactionForm).entries());
 
@@ -70,7 +91,7 @@ transactionForm.addEventListener('submit', async (event) => {
 
     transactionForm.reset();
     transactionForm.elements.date.value = new Date().toISOString().slice(0, 10);
-    setMessage(tradeMessage, 'Сделка сохранена.', 'ok');
+    setMessage(tradeMessage, 'Сделка сохранена. Класс инструмента определен автоматически.', 'ok');
     await loadPortfolio(true);
   } catch (error) {
     setMessage(tradeMessage, error.message, 'error');
@@ -82,15 +103,18 @@ async function loadWatchlist() {
   state.watchlist = await response.json();
   const datalist = document.querySelector('#ticker-list');
 
-  datalist.innerHTML = Object.values(state.watchlist)
+  datalist.innerHTML = Object.values(state.watchlist.universe || {})
     .flat()
-    .map((instrument) => `<option value="${instrument.symbol}">${instrument.name}</option>`)
+    .map((ticker) => {
+      const instrument = state.watchlist.instruments?.[ticker];
+      return `<option value="${ticker}">${instrument?.name || ticker}</option>`;
+    })
     .join('');
 }
 
 async function loadPortfolio(refresh = false) {
   refreshButton.disabled = true;
-  refreshButton.textContent = refresh ? 'Обновляю...' : 'Загружаю...';
+  refreshButton.textContent = refresh ? 'Обновляю MOEX...' : 'Загружаю...';
 
   try {
     const response = await fetch(`/api/portfolio${refresh ? '?refresh=1' : ''}`);
@@ -100,19 +124,24 @@ async function loadPortfolio(refresh = false) {
     setMessage(tradeMessage, `Не удалось загрузить портфель: ${error.message}`, 'error');
   } finally {
     refreshButton.disabled = false;
-    refreshButton.textContent = 'Обновить цены рынка';
+    refreshButton.textContent = 'Обновить рынок MOEX';
   }
 }
 
 function render() {
   if (!state.portfolio) return;
 
+  renderSettings(state.portfolio.settings);
   renderTotals(state.portfolio);
   renderRecommendations(state.portfolio.recommendations);
   renderAllocation(state.portfolio.allocation);
   renderPositions(state.portfolio.positions);
   renderCashHistory(state.portfolio.cashMovements);
   renderTransactions(state.portfolio.transactions);
+}
+
+function renderSettings(settings) {
+  settingsForm.elements.commissionPercent.value = formatPlainNumber((settings.commissionRate || 0) * 100, 3);
 }
 
 function renderTotals(portfolio) {
@@ -131,18 +160,23 @@ function renderRecommendations(recommendations) {
   root.innerHTML = recommendations
     .map((recommendation) => {
       const candidate = recommendation.candidates?.[0];
+      const analysis = candidate?.analysis || {};
       const candidateHtml = candidate
         ? `
           <div class="candidate">
             <div>
               <span class="tag">${candidate.symbol}</span>
               <strong>${candidate.name}</strong>
-              <p>${escapeHtml(candidate.thesis || '')}</p>
+              <p>${escapeHtml(analysis.summary || '')}</p>
+              ${renderList('Почему', analysis.reasons)}
+              ${renderList('Риски', analysis.risks)}
             </div>
             <dl>
               <div><dt>Лот</dt><dd>${candidate.lotSize || 1} шт.</dd></div>
-              <div><dt>Цена</dt><dd>${formatMoney(candidate.price || candidate.referencePrice)}</dd></div>
-              <div><dt>Лот стоит</dt><dd>${formatMoney(candidate.lotCost || ((candidate.price || candidate.referencePrice) * (candidate.lotSize || 1)))}</dd></div>
+              <div><dt>Цена</dt><dd>${formatMoney(candidate.price || 0)}</dd></div>
+              <div><dt>Лот + комиссия</dt><dd>${formatMoney(candidate.lotCostWithCommission || candidate.lotCost || 0)}</dd></div>
+              <div><dt>Buy score</dt><dd>${analysis.buyScore ?? 0}/100</dd></div>
+              <div><dt>Перекупленность</dt><dd>${analysis.overboughtScore ?? 0}/100</dd></div>
             </dl>
           </div>
         `
@@ -156,11 +190,18 @@ function renderRecommendations(recommendations) {
             <strong>${formatMoney(recommendation.estimatedCost)}</strong>
           </div>
         `
-        : '';
+        : recommendation.action === 'sell'
+          ? `
+            <div class="order-box order-box--sell">
+              Возможное сокращение: примерно на
+              <strong>${formatMoney(recommendation.estimatedSellAmount)}</strong>
+            </div>
+          `
+          : '';
 
       return `
         <article class="recommendation recommendation--${recommendation.action}">
-          <p class="phase">Этап ${recommendation.phase || 'баланс'}</p>
+          <p class="phase">${recommendation.actionLabel || actionLabel(recommendation.action)} · ${assetLabels[recommendation.phase] || 'баланс'}</p>
           <h3>${escapeHtml(recommendation.title)}</h3>
           <p>${escapeHtml(recommendation.detail)}</p>
           ${orderHtml}
@@ -169,6 +210,25 @@ function renderRecommendations(recommendations) {
       `;
     })
     .join('');
+}
+
+function renderList(title, items = []) {
+  if (!items.length) return '';
+  return `
+    <details>
+      <summary>${title}</summary>
+      <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+    </details>
+  `;
+}
+
+function actionLabel(action) {
+  return {
+    buy: 'Докупить',
+    sell: 'Продать/сократить',
+    wait: 'Подождать',
+    deposit: 'Пополнить'
+  }[action] || action;
 }
 
 function renderAllocation(allocation) {
@@ -200,8 +260,8 @@ function renderPositions(positions) {
   const marketStatus = document.querySelector('#market-status');
 
   if (positions.length === 0) {
-    root.innerHTML = '<tr><td colspan="7">Пока нет позиций. Сначала пополните баланс, затем купите предложенный инструмент.</td></tr>';
-    marketStatus.textContent = 'Позиции появятся после первой сделки.';
+    root.innerHTML = '<tr><td colspan="8">Пока нет позиций. Сначала пополните баланс, затем купите предложенный инструмент.</td></tr>';
+    marketStatus.textContent = 'Источник данных: MOEX ISS. Позиции появятся после первой сделки.';
     return;
   }
 
@@ -211,12 +271,13 @@ function renderPositions(positions) {
     .sort()
     .at(-1);
   marketStatus.textContent = latestQuote
-    ? `Последнее обновление котировок: ${new Date(latestQuote).toLocaleString('ru-RU')}.`
-    : 'Если рынок не вернул цену, используется средняя цена покупки или ориентир.';
+    ? `Источник данных: MOEX ISS. Последнее обновление: ${new Date(latestQuote).toLocaleString('ru-RU')}.`
+    : 'Источник данных: MOEX ISS. Если рынок не вернул цену, используется fallback.';
 
   root.innerHTML = positions
     .map((position) => {
       const pnlClass = position.unrealizedPnl >= 0 ? 'positive' : 'negative';
+      const analysis = position.quote.analysis || {};
       return `
         <tr>
           <td><strong>${position.ticker}</strong><br><small>${escapeHtml(position.name || '')}</small></td>
@@ -226,6 +287,10 @@ function renderPositions(positions) {
           <td>${formatMoney(position.lastPrice)}<br><small>${position.quote.source}</small></td>
           <td>${formatMoney(position.marketValue)}</td>
           <td class="${pnlClass}">${formatMoney(position.unrealizedPnl)}<br><small>${formatPercent(position.unrealizedPnlPct)}</small></td>
+          <td>
+            <strong>${analysis.buyScore ?? 0}/100</strong>
+            <br><small>перегрев ${analysis.overboughtScore ?? 0}/100</small>
+          </td>
         </tr>
       `;
     })
@@ -328,6 +393,10 @@ function formatPercent(value) {
     style: 'percent',
     maximumFractionDigits: 1
   }).format(Number(value || 0));
+}
+
+function formatPlainNumber(value, digits = 2) {
+  return Number(value || 0).toFixed(digits).replace(/\.?0+$/, '');
 }
 
 function formatQuantity(value) {

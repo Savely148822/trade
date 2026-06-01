@@ -9,21 +9,33 @@
   <body>
     <header class="hero">
       <div>
-        <p class="eyebrow">Локальный помощник инвестора</p>
+        <p class="eyebrow">MOEX ISS · локальный помощник инвестора</p>
         <h1>MOEX-портфель на всю жизнь</h1>
         <p class="hero__text">
-          Пополняй рублевый баланс, а бот подскажет, что купить на Мосбирже.
-          Строим портфель по шагам: сначала 70% голубые фишки, потом 20% ОФЗ,
-          потом 10% быстрорастущие компании.
+          Пополняй рублевый баланс, а бот анализирует российский рынок,
+          сам классифицирует инструмент и подсказывает: что докупить, чего не
+          трогать и что можно сократить.
         </p>
       </div>
       <button id="refresh-market" class="button button--secondary" type="button">
-        Обновить цены рынка
+        Обновить рынок MOEX
       </button>
     </header>
 
     <main class="layout">
       <aside class="sidebar">
+        <section class="panel">
+          <h2>Настройки брокера</h2>
+          <form id="settings-form" class="form">
+            <label>
+              Комиссия за сделку, %
+              <input name="commissionPercent" type="number" min="0" max="5" step="0.001" value="0.06" required />
+            </label>
+            <button class="button" type="submit">Сохранить комиссию</button>
+            <p id="settings-message" class="message" role="status"></p>
+          </form>
+        </section>
+
         <section class="panel">
           <h2>1. Пополнить баланс</h2>
           <form id="deposit-form" class="form">
@@ -64,15 +76,6 @@
               <datalist id="ticker-list"></datalist>
             </label>
 
-            <label>
-              Категория
-              <select name="assetClass">
-                <option value="blue_chips">Голубые фишки</option>
-                <option value="bonds">Облигации</option>
-                <option value="growth">Быстрорастущие</option>
-              </select>
-            </label>
-
             <div class="form__row">
               <label>
                 Количество, шт.
@@ -91,7 +94,7 @@
 
             <label>
               Заметка
-              <textarea name="notes" rows="2" placeholder="Почему купил или продал"></textarea>
+              <textarea name="notes" rows="2" placeholder="Фактическая цена из брокера"></textarea>
             </label>
 
             <button class="button" type="submit">Запомнить сделку</button>
@@ -123,8 +126,8 @@
         <section class="panel recommendation-panel">
           <div class="panel__header">
             <div>
-              <h2>Что купить сейчас</h2>
-              <p>Рекомендация учитывает свободные рубли, лоты и текущий этап сборки.</p>
+              <h2>Что сделать сейчас</h2>
+              <p>Покупки и продажи ранжируются по структуре 70/20/10, цене лота, комиссии и скорингу MOEX.</p>
             </div>
           </div>
           <div id="recommendations" class="recommendations"></div>
@@ -134,7 +137,7 @@
           <div class="panel__header">
             <div>
               <h2>План 70/20/10</h2>
-              <p>Сначала закрываем цель по голубым фишкам, затем ОФЗ, затем рост.</p>
+              <p>Сначала голубые фишки, потом ОФЗ, потом ростовые идеи.</p>
             </div>
           </div>
           <div id="allocation" class="allocation"></div>
@@ -143,8 +146,8 @@
         <section class="panel">
           <div class="panel__header">
             <div>
-              <h2>Позиции на Мосбирже</h2>
-              <p id="market-status">Котировки обновляются через локальный сервер.</p>
+              <h2>Позиции</h2>
+              <p id="market-status">Источник данных: MOEX ISS.</p>
             </div>
           </div>
           <div class="table-wrap">
@@ -152,12 +155,13 @@
               <thead>
                 <tr>
                   <th>Тикер</th>
-                  <th>Категория</th>
+                  <th>Класс</th>
                   <th>Кол-во</th>
                   <th>Средняя</th>
                   <th>Рынок</th>
                   <th>Стоимость</th>
                   <th>P/L</th>
+                  <th>Скоринг</th>
                 </tr>
               </thead>
               <tbody id="positions"></tbody>
@@ -180,7 +184,7 @@
             <div class="panel__header">
               <div>
                 <h2>Сделки</h2>
-                <p>Покупки списывают баланс, продажи возвращают рубли.</p>
+                <p>Покупки списывают баланс с комиссией, продажи возвращают рубли за вычетом комиссии.</p>
               </div>
             </div>
             <div id="transactions" class="history-list"></div>
