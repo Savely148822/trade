@@ -22,7 +22,7 @@ body {
   margin: 0;
   background:
     radial-gradient(circle at top left, rgba(88, 166, 255, 0.14), transparent 32rem),
-    radial-gradient(circle at top right, rgba(188, 140, 255, 0.12), transparent 28rem),
+    radial-gradient(circle at top right, rgba(63, 185, 80, 0.1), transparent 28rem),
     var(--bg);
   color: var(--text);
   font-family:
@@ -41,7 +41,7 @@ textarea {
   gap: 2rem;
   align-items: center;
   justify-content: space-between;
-  max-width: 1280px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 3rem 1.5rem 2rem;
 }
@@ -56,6 +56,7 @@ textarea {
 
 h1,
 h2,
+h3,
 p {
   margin-top: 0;
 }
@@ -72,7 +73,7 @@ h2 {
 }
 
 .hero__text {
-  max-width: 720px;
+  max-width: 780px;
   margin-bottom: 0;
   color: var(--muted);
   font-size: 1.1rem;
@@ -83,21 +84,28 @@ h2 {
   display: grid;
   grid-template-columns: minmax(320px, 420px) 1fr;
   gap: 1.25rem;
-  max-width: 1280px;
+  max-width: 1320px;
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
 }
 
+.sidebar,
 .dashboard {
   display: grid;
+  align-content: start;
   gap: 1.25rem;
+}
+
+.sidebar {
+  position: sticky;
+  top: 1rem;
 }
 
 .panel,
 .card {
   border: 1px solid var(--line);
   border-radius: 24px;
-  background: rgba(22, 27, 34, 0.88);
+  background: rgba(22, 27, 34, 0.9);
   box-shadow: var(--shadow);
 }
 
@@ -105,10 +113,8 @@ h2 {
   padding: 1.25rem;
 }
 
-.panel--form {
-  align-self: start;
-  position: sticky;
-  top: 1rem;
+.recommendation-panel {
+  border-color: rgba(88, 166, 255, 0.5);
 }
 
 .panel__header {
@@ -120,18 +126,23 @@ h2 {
 }
 
 .panel__header p {
+  margin-bottom: 0;
   color: var(--muted);
   font-size: 0.92rem;
 }
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
 }
 
 .card {
   padding: 1.2rem;
+}
+
+.card--accent {
+  border-color: rgba(63, 185, 80, 0.55);
 }
 
 .card span {
@@ -141,7 +152,7 @@ h2 {
 }
 
 .card strong {
-  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  font-size: clamp(1.3rem, 2.6vw, 2rem);
 }
 
 .form {
@@ -195,6 +206,11 @@ textarea:focus {
   filter: brightness(1.08);
 }
 
+.button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .button--secondary {
   border: 1px solid var(--line);
   background: var(--panel);
@@ -203,6 +219,7 @@ textarea:focus {
 
 .message {
   min-height: 1.4rem;
+  margin-bottom: 0;
   color: var(--muted);
 }
 
@@ -214,9 +231,86 @@ textarea:focus {
   color: var(--green);
 }
 
-.allocation {
+.recommendations,
+.allocation,
+.history-list {
   display: grid;
-  gap: 0.9rem;
+  gap: 0.85rem;
+}
+
+.recommendation {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.12), rgba(31, 38, 48, 0.95));
+  padding: 1.15rem;
+}
+
+.recommendation h3 {
+  margin-bottom: 0.45rem;
+  font-size: 1.25rem;
+}
+
+.recommendation p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.phase {
+  margin-bottom: 0.45rem;
+  color: var(--blue) !important;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.order-box {
+  border: 1px solid rgba(63, 185, 80, 0.45);
+  border-radius: 16px;
+  background: rgba(63, 185, 80, 0.12);
+  margin: 1rem 0;
+  padding: 0.9rem;
+}
+
+.candidate {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  align-items: start;
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.candidate dl {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 180px;
+  margin: 0;
+}
+
+.candidate dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.tag {
+  display: inline-flex;
+  margin: 0 0.35rem 0.35rem 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  color: var(--text);
+  font-size: 0.85rem;
 }
 
 .allocation__row {
@@ -230,6 +324,11 @@ textarea:focus {
   color: var(--muted);
 }
 
+.allocation__sub {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .allocation__bar {
   overflow: hidden;
   height: 12px;
@@ -240,40 +339,7 @@ textarea:focus {
 .allocation__fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--blue), var(--purple));
-}
-
-.recommendations {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.recommendation {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--panel-soft);
-  padding: 1rem;
-}
-
-.recommendation h3 {
-  margin: 0 0 0.4rem;
-  font-size: 1rem;
-}
-
-.recommendation p {
-  margin-bottom: 0.55rem;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
-.tag {
-  display: inline-flex;
-  margin: 0.2rem 0.35rem 0 0;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.25rem 0.55rem;
-  color: var(--text);
-  font-size: 0.85rem;
+  background: linear-gradient(90deg, var(--blue), var(--green));
 }
 
 .table-wrap {
@@ -306,12 +372,13 @@ th {
   color: var(--red);
 }
 
-.transactions {
+.history-grid {
   display: grid;
-  gap: 0.7rem;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
 }
 
-.transaction {
+.history-item {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 1rem;
@@ -322,7 +389,8 @@ th {
   padding: 0.85rem;
 }
 
-.transaction small {
+.history-item small,
+small {
   color: var(--muted);
 }
 
@@ -334,33 +402,34 @@ th {
   font-weight: 700;
 }
 
-@media (max-width: 980px) {
-  .hero,
-  .layout {
+@media (max-width: 1100px) {
+  .layout,
+  .history-grid {
     grid-template-columns: 1fr;
   }
 
+  .sidebar {
+    position: static;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 680px) {
   .hero {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .panel--form {
-    position: static;
-  }
-
-  .cards {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 560px) {
+  .cards,
   .form__row,
-  .panel__header {
+  .candidate {
     grid-template-columns: 1fr;
   }
 
-  .transaction {
+  .history-item {
     grid-template-columns: 1fr;
   }
 }

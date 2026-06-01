@@ -3,17 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Портфель на всю жизнь</title>
+    <title>MOEX-портфель на всю жизнь</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="hero">
       <div>
         <p class="eyebrow">Локальный помощник инвестора</p>
-        <h1>Портфель на всю жизнь</h1>
+        <h1>MOEX-портфель на всю жизнь</h1>
         <p class="hero__text">
-          Записывай покупки и продажи, смотри текущую стоимость портфеля,
-          прибыль по позициям и подсказки по ребалансу 70/20/10.
+          Пополняй рублевый баланс, а бот подскажет, что купить на Мосбирже.
+          Строим портфель по шагам: сначала 70% голубые фишки, потом 20% ОФЗ,
+          потом 10% быстрорастущие компании.
         </p>
       </div>
       <button id="refresh-market" class="button button--secondary" type="button">
@@ -22,104 +23,129 @@
     </header>
 
     <main class="layout">
-      <section class="panel panel--form">
-        <h2>Добавить сделку</h2>
-        <form id="transaction-form" class="form">
-          <label>
-            Тип операции
-            <select name="type">
-              <option value="buy">Купил</option>
-              <option value="sell">Продал</option>
-            </select>
-          </label>
-
-          <label>
-            Тикер
-            <input name="ticker" placeholder="AAPL, MSFT, BND..." required />
-          </label>
-
-          <label>
-            Название
-            <input name="name" placeholder="Apple" />
-          </label>
-
-          <label>
-            Категория
-            <select name="assetClass">
-              <option value="blue_chips">Голубые фишки (70%)</option>
-              <option value="bonds">Облигации (20%)</option>
-              <option value="growth">Быстрорастущие (10%)</option>
-            </select>
-          </label>
-
-          <div class="form__row">
+      <aside class="sidebar">
+        <section class="panel">
+          <h2>1. Пополнить баланс</h2>
+          <form id="deposit-form" class="form">
             <label>
-              Количество
-              <input name="quantity" type="number" min="0" step="0.000001" required />
+              Сумма, ₽
+              <input name="amount" type="number" min="1" step="0.01" placeholder="5000" required />
             </label>
-            <label>
-              Цена сделки
-              <input name="price" type="number" min="0" step="0.01" required />
-            </label>
-          </div>
 
-          <div class="form__row">
-            <label>
-              Валюта
-              <input name="currency" value="USD" maxlength="3" required />
-            </label>
             <label>
               Дата
               <input name="date" type="date" required />
             </label>
-          </div>
 
-          <label>
-            Заметка
-            <textarea name="notes" rows="3" placeholder="Почему покупаю, горизонт, риск..."></textarea>
-          </label>
+            <label>
+              Заметка
+              <textarea name="notes" rows="2" placeholder="Зарплата, довнесение, кэш..."></textarea>
+            </label>
 
-          <button class="button" type="submit">Запомнить сделку</button>
-          <p id="form-message" class="message" role="status"></p>
-        </form>
-      </section>
+            <button class="button" type="submit">Положил рубли на баланс</button>
+            <p id="deposit-message" class="message" role="status"></p>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>2. Записать исполненную сделку</h2>
+          <form id="transaction-form" class="form">
+            <label>
+              Тип операции
+              <select name="type">
+                <option value="buy">Купил</option>
+                <option value="sell">Продал</option>
+              </select>
+            </label>
+
+            <label>
+              Тикер Мосбиржи
+              <input name="ticker" list="ticker-list" placeholder="SBER" required />
+              <datalist id="ticker-list"></datalist>
+            </label>
+
+            <label>
+              Категория
+              <select name="assetClass">
+                <option value="blue_chips">Голубые фишки</option>
+                <option value="bonds">Облигации</option>
+                <option value="growth">Быстрорастущие</option>
+              </select>
+            </label>
+
+            <div class="form__row">
+              <label>
+                Количество, шт.
+                <input name="quantity" type="number" min="0" step="0.000001" required />
+              </label>
+              <label>
+                Цена, ₽
+                <input name="price" type="number" min="0" step="0.01" required />
+              </label>
+            </div>
+
+            <label>
+              Дата
+              <input name="date" type="date" required />
+            </label>
+
+            <label>
+              Заметка
+              <textarea name="notes" rows="2" placeholder="Почему купил или продал"></textarea>
+            </label>
+
+            <button class="button" type="submit">Запомнить сделку</button>
+            <p id="trade-message" class="message" role="status"></p>
+          </form>
+        </section>
+      </aside>
 
       <section class="dashboard">
-        <section class="cards" aria-label="Итоги портфеля">
-          <article class="card">
-            <span>Стоимость</span>
-            <strong id="total-value">0</strong>
+        <section class="cards" aria-label="Итоги">
+          <article class="card card--accent">
+            <span>Свободный баланс</span>
+            <strong id="cash-balance">0 ₽</strong>
           </article>
           <article class="card">
-            <span>Вложено</span>
-            <strong id="total-cost">0</strong>
+            <span>Позиции</span>
+            <strong id="invested-value">0 ₽</strong>
+          </article>
+          <article class="card">
+            <span>Всего с кешем</span>
+            <strong id="assets-with-cash">0 ₽</strong>
           </article>
           <article class="card">
             <span>Прибыль / убыток</span>
-            <strong id="total-pnl">0</strong>
+            <strong id="total-pnl">0 ₽</strong>
           </article>
         </section>
 
-        <section class="panel">
+        <section class="panel recommendation-panel">
           <div class="panel__header">
-            <h2>Структура 70/20/10</h2>
-            <p>Цель: 70% голубые фишки, 20% облигации, 10% рост.</p>
-          </div>
-          <div id="allocation" class="allocation"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel__header">
-            <h2>Рекомендации</h2>
-            <p>Это подсказки по структуре, а не индивидуальная инвестиционная рекомендация.</p>
+            <div>
+              <h2>Что купить сейчас</h2>
+              <p>Рекомендация учитывает свободные рубли, лоты и текущий этап сборки.</p>
+            </div>
           </div>
           <div id="recommendations" class="recommendations"></div>
         </section>
 
         <section class="panel">
           <div class="panel__header">
-            <h2>Позиции</h2>
-            <p id="market-status">Рыночные данные загружаются через локальный сервер.</p>
+            <div>
+              <h2>План 70/20/10</h2>
+              <p>Сначала закрываем цель по голубым фишкам, затем ОФЗ, затем рост.</p>
+            </div>
+          </div>
+          <div id="allocation" class="allocation"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__header">
+            <div>
+              <h2>Позиции на Мосбирже</h2>
+              <p id="market-status">Котировки обновляются через локальный сервер.</p>
+            </div>
           </div>
           <div class="table-wrap">
             <table>
@@ -139,12 +165,26 @@
           </div>
         </section>
 
-        <section class="panel">
-          <div class="panel__header">
-            <h2>История сделок</h2>
-            <p>Хранится локально в файле data/portfolio.json.</p>
-          </div>
-          <div id="transactions" class="transactions"></div>
+        <section class="history-grid">
+          <section class="panel">
+            <div class="panel__header">
+              <div>
+                <h2>Пополнения</h2>
+                <p>Свободные рубли для будущих покупок.</p>
+              </div>
+            </div>
+            <div id="cash-history" class="history-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel__header">
+              <div>
+                <h2>Сделки</h2>
+                <p>Покупки списывают баланс, продажи возвращают рубли.</p>
+              </div>
+            </div>
+            <div id="transactions" class="history-list"></div>
+          </section>
         </section>
       </section>
     </main>

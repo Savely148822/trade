@@ -6,9 +6,12 @@ const path = require('node:path');
 const { URL } = require('node:url');
 
 const {
-  DEFAULT_WATCHLIST,
+  MOEX_WATCHLIST,
   buildPortfolio,
   buildPositions,
+  calculateCash,
+  findInstrument,
+  validateCashDeposit,
   validateTransaction
 } = require('./src/portfolio');
 
@@ -18,17 +21,17 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 
 const DEFAULT_DATA = {
+  cashMovements: [],
   transactions: [],
   quotes: {},
-  watchlist: DEFAULT_WATCHLIST
+  watchlist: MOEX_WATCHLIST
 };
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml; charset=utf-8'
+  '.json': 'application/json; charset=utf-8'
 };
 
 async function loadData() {
@@ -57,20 +60,41 @@ async function routeApi(request, response, url) {
     const data = await loadData();
     const quotes = await hydrateQuotes(data, url.searchParams.get('refresh') === '1');
     await saveData(data);
-    return sendJson(response, buildPortfolio(data.transactions, quotes, data.watchlist));
+    return sendJson(response, buildPortfolio(data.transactions, quotes, data.watchlist, data.cashMovements));
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/transactions') {
+  if (request.method === 'POST' && url.pathname === '/api/cash/deposits') {
     const body = await readJsonBody(request);
-    const validation = validateTransaction(body);
+    const validation = validateCashDeposit(body);
 
     if (!validation.valid) {
       return sendJson(response, { errors: validation.errors }, 400);
     }
 
     const data = await loadData();
+    data.cashMovements.push(validation.value);
+    await saveData(data);
+    return sendJson(response, { cashMovement: validation.value }, 201);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/transactions') {
+    const body = await readJsonBody(request);
+    const data = await loadData();
+    const validation = validateTransaction(body, data.watchlist);
+
+    if (!validation.valid) {
+      return sendJson(response, { errors: validation.errors }, 400);
+    }
+
+    const positions = buildPositions(data.transactions, data.quotes);
+    const cash = calculateCash(data.cashMovements, data.transactions);
+    const value = validation.value.quantity * validation.value.price;
+
+    if (validation.value.type === 'buy' && cash.balance + 0.000001 < value) {
+      return sendJson(response, { errors: ['Недостаточно рублей на свободном балансе для этой покупки.'] }, 400);
+    }
+
     if (validation.value.type === 'sell') {
-      const positions = buildPositions(data.transactions, data.quotes);
       const existing = positions.find((position) => position.ticker === validation.value.ticker);
 
       if (!existing || existing.quantity < validation.value.quantity) {
@@ -92,6 +116,15 @@ async function routeApi(request, response, url) {
     return sendJson(response, { deleted: before !== data.transactions.length });
   }
 
+  if (request.method === 'DELETE' && url.pathname.startsWith('/api/cash/deposits/')) {
+    const id = decodeURIComponent(url.pathname.replace('/api/cash/deposits/', ''));
+    const data = await loadData();
+    const before = data.cashMovements.length;
+    data.cashMovements = data.cashMovements.filter((movement) => movement.id !== id);
+    await saveData(data);
+    return sendJson(response, { deleted: before !== data.cashMovements.length });
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/watchlist') {
     const data = await loadData();
     return sendJson(response, data.watchlist);
@@ -111,13 +144,17 @@ async function hydrateQuotes(data, forceRefresh = false) {
 
     if (!forceRefresh && isFresh) continue;
 
+    const instrument = findInstrument(ticker, data.watchlist);
+
     try {
-      data.quotes[ticker] = await fetchYahooQuote(ticker);
+      data.quotes[ticker] = await fetchMoexQuote(instrument || { symbol: ticker });
     } catch (error) {
       data.quotes[ticker] = {
         ...(cached || {}),
+        price: cached?.price || instrument?.referencePrice || null,
+        currency: 'RUB',
         error: error.message,
-        source: cached?.source || 'manual',
+        source: cached?.source || (instrument?.referencePrice ? 'ориентир' : 'нет котировки'),
         asOf: cached?.asOf || new Date().toISOString()
       };
     }
@@ -126,16 +163,16 @@ async function hydrateQuotes(data, forceRefresh = false) {
   return data.quotes;
 }
 
-async function fetchYahooQuote(ticker) {
-  if (typeof fetch !== 'function') {
-    throw new Error('Node.js fetch API is unavailable. Use Node.js 18 or newer.');
+async function fetchMoexQuote(instrument) {
+  if (!instrument.yahooSymbol) {
+    throw new Error(`No market data adapter configured for ${instrument.symbol}`);
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1d`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(instrument.yahooSymbol)}?range=1d&interval=1d`;
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      'user-agent': 'lifetime-portfolio-local-app/0.1'
+      'user-agent': 'lifetime-moex-portfolio-local-app/0.2'
     }
   });
 
@@ -149,14 +186,14 @@ async function fetchYahooQuote(ticker) {
   const price = Number(meta?.regularMarketPrice || meta?.previousClose);
 
   if (!Number.isFinite(price) || price <= 0) {
-    throw new Error(`No market price returned for ${ticker}`);
+    throw new Error(`No market price returned for ${instrument.symbol}`);
   }
 
   return {
     price,
-    currency: meta.currency || 'USD',
+    currency: 'RUB',
     asOf: new Date().toISOString(),
-    source: 'Yahoo Finance'
+    source: 'Yahoo Finance / MOEX'
   };
 }
 
@@ -230,12 +267,12 @@ const server = http.createServer(async (request, response) => {
 
 if (require.main === module) {
   server.listen(PORT, () => {
-    console.log(`Lifetime portfolio assistant is running at http://localhost:${PORT}`);
+    console.log(`MOEX portfolio assistant is running at http://localhost:${PORT}`);
   });
 }
 
 module.exports = {
   server,
-  fetchYahooQuote,
+  fetchMoexQuote,
   hydrateQuotes
 };
