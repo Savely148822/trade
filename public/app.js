@@ -19,10 +19,12 @@ const authMessage = document.querySelector('#auth-message');
 const authUser = document.querySelector('#auth-user');
 const settingsForm = document.querySelector('#settings-form');
 const depositForm = document.querySelector('#deposit-form');
+const balanceCorrectionForm = document.querySelector('#balance-correction-form');
 const transactionForm = document.querySelector('#transaction-form');
 const withdrawalForm = document.querySelector('#withdrawal-form');
 const settingsMessage = document.querySelector('#settings-message');
 const depositMessage = document.querySelector('#deposit-message');
+const balanceCorrectionMessage = document.querySelector('#balance-correction-message');
 const tradeMessage = document.querySelector('#trade-message');
 const withdrawalMessage = document.querySelector('#withdrawal-message');
 const refreshButton = document.querySelector('#refresh-market');
@@ -128,6 +130,31 @@ depositForm.addEventListener('submit', async (event) => {
     await loadPortfolio();
   } catch (error) {
     setMessage(depositMessage, error.message, 'error');
+  }
+});
+
+
+balanceCorrectionForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setMessage(balanceCorrectionMessage, 'Сохраняю ручную корректировку кэша...');
+
+  const payload = Object.fromEntries(new FormData(balanceCorrectionForm).entries());
+
+  try {
+    const response = await fetch('/api/cash/balance-correction', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+
+    if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
+
+    balanceCorrectionForm.reset();
+    setMessage(balanceCorrectionMessage, 'Расчетный кэш исправлен.', 'ok');
+    await loadPortfolio();
+  } catch (error) {
+    setMessage(balanceCorrectionMessage, error.message, 'error');
   }
 });
 
@@ -560,9 +587,9 @@ function renderCashHistory(cashMovements) {
     .map((movement) => `
       <article class="history-item">
         <div>
-          <strong>${formatMoney(movement.amount)}</strong>
+          <strong>${movement.type === 'adjustment' ? 'Коррекция ' : ''}${formatMoney(movement.amount)}</strong>
           <br>
-          <small>${movement.date}${movement.notes ? ` · ${escapeHtml(movement.notes)}` : ''}</small>
+          <small>${movement.date}${movement.type === 'adjustment' && movement.targetBalance !== undefined ? ` · фактически ${formatMoney(movement.targetBalance)}` : ''}${movement.notes ? ` · ${escapeHtml(movement.notes)}` : ''}</small>
         </div>
         <button class="link-button" type="button" data-delete-deposit="${movement.id}">Удалить</button>
       </article>

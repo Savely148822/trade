@@ -20,6 +20,7 @@ const {
   normalizeTicker,
   scoreInstrument,
   tradeCashImpact,
+  validateCashCorrection,
   validateCashDeposit,
   validateSettings,
   validateTransaction
@@ -335,6 +336,33 @@ async function routeApi(request, response, url) {
     data.cashMovements.push(validation.value);
     await saveStore(context.store);
     return sendJson(response, { cashMovement: validation.value }, 201);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/cash/balance-correction') {
+    const body = await readJsonBody(request);
+    const validation = validateCashCorrection(body);
+
+    if (!validation.valid) {
+      return sendJson(response, { errors: validation.errors }, 400);
+    }
+
+    const cash = calculateCash(data.cashMovements, data.transactions, data.settings);
+    const targetBalance = validation.value.amount;
+    const delta = Math.round((targetBalance - cash.balance + Number.EPSILON) * 100) / 100;
+    const correction = {
+      id: 'cash_' + Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex'),
+      type: 'adjustment',
+      amount: delta,
+      targetBalance,
+      previousBalance: cash.balance,
+      currency: 'RUB',
+      date: validation.value.date,
+      notes: validation.value.notes || 'Ручная корректировка доступного кэша',
+      createdAt: new Date().toISOString()
+    };
+    data.cashMovements.push(correction);
+    await saveStore(context.store);
+    return sendJson(response, { cashMovement: correction }, 201);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/transactions') {

@@ -237,3 +237,14 @@ test('imported existing holdings do not reduce manual cash balance', () => {
   assert.equal(positions[0].quantity, 2);
   assert.equal(positions[0].marketValue, 640);
 });
+
+test('manual cash adjustment corrects calculated balance by delta', () => {
+  const cash = calculateCash([
+    { type: 'deposit', amount: 5000 },
+    { type: 'adjustment', amount: -750, targetBalance: 4250 }
+  ], [], settings);
+
+  assert.equal(cash.deposited, 5000);
+  assert.equal(cash.adjustments, -750);
+  assert.equal(cash.balance, 4250);
+});

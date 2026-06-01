@@ -175,6 +175,23 @@ function validateCashDeposit(input) {
   };
 }
 
+function validateCashCorrection(input) {
+  const errors = [];
+  const amount = toFiniteNumber(input.amount);
+
+  if (amount === null || amount < 0) errors.push('Фактический доступный кэш должен быть числом не меньше 0.');
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    value: {
+      amount,
+      date: input.date || new Date().toISOString().slice(0, 10),
+      notes: String(input.notes || '').trim()
+    }
+  };
+}
+
 function validateSettings(input) {
   const errors = [];
   const commissionRate = toFiniteNumber(input.commissionRate);
@@ -256,6 +273,10 @@ function calculateCash(cashMovements = [], transactions = [], settings = {}) {
     const amount = toFiniteNumber(movement.amount);
     return movement.type === 'deposit' && amount ? sum + amount : sum;
   }, 0);
+  const adjustments = cashMovements.reduce((sum, movement) => {
+    const amount = toFiniteNumber(movement.amount);
+    return movement.type === 'adjustment' && amount !== null ? sum + amount : sum;
+  }, 0);
 
   const fromTrades = transactions.reduce((sum, transaction) => {
     return sum + tradeCashImpact(transaction, settings).signedCash;
@@ -263,7 +284,8 @@ function calculateCash(cashMovements = [], transactions = [], settings = {}) {
 
   return {
     deposited: roundMoney(deposited),
-    balance: roundMoney(deposited + fromTrades)
+    adjustments: roundMoney(adjustments),
+    balance: roundMoney(deposited + adjustments + fromTrades)
   };
 }
 
@@ -1029,6 +1051,7 @@ module.exports = {
   normalizeTicker,
   scoreInstrument,
   tradeCashImpact,
+  validateCashCorrection,
   validateCashDeposit,
   validateSettings,
   validateTransaction

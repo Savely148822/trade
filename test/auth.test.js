@@ -26,8 +26,10 @@ test('service auth protects portfolio data per user', async () => {
 
     const firstDeposit = await deposit(base, firstCookie, 5000);
     const secondDeposit = await deposit(base, secondCookie, 12000);
+    const correction = await correctBalance(base, firstCookie, 4200);
     assert.equal(firstDeposit.status, 201);
     assert.equal(secondDeposit.status, 201);
+    assert.equal(correction.status, 201);
 
     const Database = require('better-sqlite3');
     const database = new Database(storePath, { readonly: true });
@@ -39,6 +41,9 @@ test('service auth protects portfolio data per user', async () => {
     const secondPortfolio = JSON.parse(second.portfolio_json);
 
     assert.equal(firstPortfolio.cashMovements[0].amount, 5000);
+    assert.equal(firstPortfolio.cashMovements[1].type, 'adjustment');
+    assert.equal(firstPortfolio.cashMovements[1].amount, -800);
+    assert.equal(firstPortfolio.cashMovements[1].targetBalance, 4200);
     assert.equal(secondPortfolio.cashMovements[0].amount, 12000);
   } finally {
     await closeServer();
@@ -89,3 +94,14 @@ test('MOEX historical price lookup returns approximate close for transaction dat
   assert.ok(price.price > 0);
   assert.match(price.source, /^moex-history:/);
 });
+
+function correctBalance(base, cookie, amount) {
+  return fetch(`${base}/api/cash/balance-correction`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      cookie
+    },
+    body: JSON.stringify({ amount, notes: 'Сверка с брокером' })
+  });
+}
