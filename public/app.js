@@ -14,9 +14,11 @@ const assetLabels = {
 const settingsForm = document.querySelector('#settings-form');
 const depositForm = document.querySelector('#deposit-form');
 const transactionForm = document.querySelector('#transaction-form');
+const withdrawalForm = document.querySelector('#withdrawal-form');
 const settingsMessage = document.querySelector('#settings-message');
 const depositMessage = document.querySelector('#deposit-message');
 const tradeMessage = document.querySelector('#trade-message');
+const withdrawalMessage = document.querySelector('#withdrawal-message');
 const refreshButton = document.querySelector('#refresh-market');
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -32,19 +34,47 @@ refreshButton.addEventListener('click', () => loadPortfolio(true));
 settingsForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   const commissionPercent = Number(settingsForm.elements.commissionPercent.value);
+  const incomeTaxPercent = Number(settingsForm.elements.incomeTaxPercent.value);
 
   try {
     const response = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ commissionRate: commissionPercent / 100 })
+      body: JSON.stringify({
+        commissionRate: commissionPercent / 100,
+        accountType: 'iis3',
+        iisOpenDate: settingsForm.elements.iisOpenDate.value,
+        claimedDeductionYears: settingsForm.elements.claimedDeductionYears.value,
+        incomeTaxRate: incomeTaxPercent / 100
+      })
     });
     const result = await response.json();
     if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
-    setMessage(settingsMessage, 'Комиссия сохранена.', 'ok');
+    setMessage(settingsMessage, 'Настройки ИИС-3 и комиссия сохранены.', 'ok');
     await loadPortfolio();
   } catch (error) {
     setMessage(settingsMessage, error.message, 'error');
+  }
+});
+
+withdrawalForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  setMessage(withdrawalMessage, 'Считаю план вывода...');
+
+  try {
+    const response = await fetch('/api/withdrawal-plan', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: withdrawalForm.elements.amount.value })
+    });
+    const result = await response.json();
+    if (!response.ok || result.plan?.valid === false) {
+      throw new Error((result.plan?.errors || result.errors || [result.error]).join(' '));
+    }
+    renderWithdrawalPlan(result.plan);
+    setMessage(withdrawalMessage, 'План готов.', 'ok');
+  } catch (error) {
+    setMessage(withdrawalMessage, error.message, 'error');
   }
 });
 
@@ -142,6 +172,9 @@ function render() {
 
 function renderSettings(settings) {
   settingsForm.elements.commissionPercent.value = formatPlainNumber((settings.commissionRate || 0) * 100, 3);
+  settingsForm.elements.iisOpenDate.value = settings.iisOpenDate || '';
+  settingsForm.elements.claimedDeductionYears.value = (settings.claimedDeductionYears || []).join(', ');
+  settingsForm.elements.incomeTaxPercent.value = formatPlainNumber((settings.incomeTaxRate || 0.13) * 100, 2);
 }
 
 function renderTotals(portfolio) {
@@ -227,10 +260,49 @@ function actionLabel(action) {
     buy: 'Докупить',
     sell: 'Продать/сократить',
     wait: 'Подождать',
-    deposit: 'Пополнить'
+    deposit: 'Пополнить',
+    tax: 'ИИС-3 / налоги'
   }[action] || action;
 }
 
+function renderWithdrawalPlan(plan) {
+  const root = document.querySelector('#withdrawal-plan');
+  if (!root) return;
+
+  if (!plan) {
+    root.innerHTML = '<p class="message">Введите сумму вывода, чтобы получить план продаж.</p>';
+    return;
+  }
+
+  const warnings = (plan.warnings || [])
+    .map((warning) => `<p class="message message--error">${escapeHtml(warning)}</p>`)
+    .join('');
+  const sales = (plan.sales || [])
+    .map((sale) => `
+      <article class="history-item">
+        <div>
+          <strong>${sale.ticker}: продать ${formatQuantity(sale.quantity)} шт.</strong>
+          <br>
+          <small>Ожидаемо к выводу ${formatMoney(sale.net)} · комиссия ${formatMoney(sale.commission)} · риск: ${escapeHtml(sale.taxRisk)}</small>
+          <br>
+          <small>${escapeHtml(sale.reason || sale.taxStatus || '')}</small>
+        </div>
+        <span class="tag">score ${sale.priorityScore}</span>
+      </article>
+    `)
+    .join('');
+  const shortfall = plan.shortfall > 0 ? ', не хватает ' + formatMoney(plan.shortfall) : '';
+
+  root.innerHTML = `
+    <article class="recommendation">
+      <h3>Нужно вывести ${formatMoney(plan.amount)}</h3>
+      <p>Свободный кеш: ${formatMoney(plan.cashUsed)}. Продажи должны дать примерно ${formatMoney(plan.targetFromSales)}.</p>
+      <p>Расчетный итог к выводу: <strong>${formatMoney(plan.estimatedNet)}</strong>${shortfall}.</p>
+    </article>
+    ${warnings}
+    ${sales || '<p class="message">Продажи не требуются или нет доступных лотов.</p>'}
+  `;
+}
 function renderAllocation(allocation) {
   const root = document.querySelector('#allocation');
 

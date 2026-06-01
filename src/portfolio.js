@@ -2,6 +2,10 @@
 
 const RUB = 'RUB';
 const DEFAULT_COMMISSION_RATE = 0.0006;
+const DEFAULT_IIS_MIN_YEARS = 5;
+const DEFAULT_IIS_PROFIT_EXEMPTION_YEARS = 10;
+const DEFAULT_INCOME_TAX_RATE = 0.13;
+const IIS_DEDUCTION_BASE_LIMIT = 400000;
 
 const TARGET_ALLOCATION = {
   blue_chips: {
@@ -66,13 +70,45 @@ function normalizeAssetClass(assetClass) {
 
 function normalizeSettings(settings = {}) {
   const commissionRate = toFiniteNumber(settings.commissionRate);
+  const incomeTaxRate = toFiniteNumber(settings.incomeTaxRate);
+  const iisMinYears = toFiniteNumber(settings.iisMinYears);
+  const iisProfitExemptionYears = toFiniteNumber(settings.iisProfitExemptionYears);
 
   return {
     commissionRate:
       commissionRate !== null && commissionRate >= 0 && commissionRate <= 0.05
         ? commissionRate
-        : DEFAULT_COMMISSION_RATE
+        : DEFAULT_COMMISSION_RATE,
+    accountType: settings.accountType === 'regular' ? 'regular' : 'iis3',
+    iisOpenDate: isValidDateString(settings.iisOpenDate) ? settings.iisOpenDate : '',
+    claimedDeductionYears: normalizeYearList(settings.claimedDeductionYears),
+    incomeTaxRate:
+      incomeTaxRate !== null && incomeTaxRate >= 0 && incomeTaxRate <= 0.3
+        ? incomeTaxRate
+        : DEFAULT_INCOME_TAX_RATE,
+    iisMinYears:
+      iisMinYears !== null && iisMinYears >= 3 && iisMinYears <= 10
+        ? iisMinYears
+        : DEFAULT_IIS_MIN_YEARS,
+    iisProfitExemptionYears:
+      iisProfitExemptionYears !== null && iisProfitExemptionYears >= 5 && iisProfitExemptionYears <= 15
+        ? iisProfitExemptionYears
+        : DEFAULT_IIS_PROFIT_EXEMPTION_YEARS
   };
+}
+
+function isValidDateString(value) {
+  if (!value) return false;
+  const date = new Date(String(value) + 'T00:00:00.000Z');
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value)) && !Number.isNaN(date.getTime());
+}
+
+function normalizeYearList(value) {
+  const items = Array.isArray(value) ? value : String(value || '').split(/[\s,;]+/);
+  return [...new Set(items
+    .map((item) => Number(item))
+    .filter((year) => Number.isInteger(year) && year >= 2024 && year <= 2100))]
+    .sort((a, b) => a - b);
 }
 
 function toFiniteNumber(value) {
@@ -142,15 +178,24 @@ function validateCashDeposit(input) {
 function validateSettings(input) {
   const errors = [];
   const commissionRate = toFiniteNumber(input.commissionRate);
+  const incomeTaxRate = toFiniteNumber(input.incomeTaxRate);
 
   if (commissionRate === null || commissionRate < 0 || commissionRate > 0.05) {
     errors.push('Комиссия должна быть числом от 0 до 5%.');
   }
 
+  if (input.iisOpenDate && !isValidDateString(input.iisOpenDate)) {
+    errors.push('Дата открытия ИИС должна быть в формате YYYY-MM-DD.');
+  }
+
+  if (incomeTaxRate !== null && (incomeTaxRate < 0 || incomeTaxRate > 0.3)) {
+    errors.push('Ставка НДФЛ должна быть от 0 до 30%.');
+  }
+
   return {
     valid: errors.length === 0,
     errors,
-    value: normalizeSettings({ commissionRate })
+    value: normalizeSettings(input)
   };
 }
 
@@ -300,6 +345,7 @@ function buildPortfolio(transactions, quotes = {}, settings = {}, cashMovements 
   const totalCost = positions.reduce((sum, position) => sum + position.costBasis, 0);
   const totalAssets = investedValue + cash.balance;
   const unrealizedPnl = investedValue - totalCost;
+  const iisSummary = buildIisSummary(cashMovements, normalizedSettings);
 
   const allocation = Object.entries(TARGET_ALLOCATION).map(([key, meta]) => {
     const value = positions
@@ -326,6 +372,7 @@ function buildPortfolio(transactions, quotes = {}, settings = {}, cashMovements 
     dataSource: 'MOEX ISS',
     currency: RUB,
     settings: normalizedSettings,
+    iis: iisSummary,
     targets: TARGET_ALLOCATION,
     buildOrder: BUILD_ORDER,
     positions,
@@ -333,7 +380,7 @@ function buildPortfolio(transactions, quotes = {}, settings = {}, cashMovements 
     cash,
     cashMovements: [...(cashMovements || [])].sort((a, b) => String(b.date).localeCompare(String(a.date))),
     transactions: [...(transactions || [])].sort((a, b) => String(b.date).localeCompare(String(a.date))),
-    recommendations: buildRecommendations(positions, allocation, cash, totalAssets, quotes, normalizedSettings),
+    recommendations: buildRecommendations(positions, allocation, cash, totalAssets, quotes, normalizedSettings, iisSummary),
     totals: {
       investedValue: roundMoney(investedValue),
       assetsWithCash: roundMoney(totalAssets),
@@ -345,8 +392,245 @@ function buildPortfolio(transactions, quotes = {}, settings = {}, cashMovements 
   };
 }
 
-function buildRecommendations(positions, allocation, cash, totalAssets, quotes = {}, settings = {}) {
+function buildIisSummary(cashMovements = [], settings = {}, today = new Date()) {
+  const normalized = normalizeSettings(settings);
+  if (normalized.accountType !== 'iis3') {
+    return { enabled: false, warnings: [] };
+  }
+
+  const openDate = normalized.iisOpenDate ? new Date(normalized.iisOpenDate + 'T00:00:00.000Z') : null;
+  const warnings = [];
+
+  if (!openDate) {
+    warnings.push('Укажите дату открытия ИИС-3, чтобы бот считал сроки вычета и риски вывода.');
+  }
+
+  const ageYears = openDate ? yearsBetween(openDate, today) : 0;
+  const minTermDate = openDate ? addYears(openDate, normalized.iisMinYears) : null;
+  const profitExemptionDate = openDate ? addYears(openDate, normalized.iisProfitExemptionYears) : null;
+  const canCloseWithoutDeductionClawback = Boolean(minTermDate && today >= minTermDate);
+  const profitTaxExemptionLikely = Boolean(profitExemptionDate && today >= profitExemptionDate);
+  const contributionsByYear = buildContributionsByYear(cashMovements);
+  const claimed = new Set(normalized.claimedDeductionYears);
+  const currentYear = today.getUTCFullYear();
+  const pendingDeductionYears = Object.entries(contributionsByYear)
+    .map(([year, amount]) => ({
+      year: Number(year),
+      amount: roundMoney(amount),
+      deductionBase: roundMoney(Math.min(amount, IIS_DEDUCTION_BASE_LIMIT)),
+      estimatedRefund: roundMoney(Math.min(amount, IIS_DEDUCTION_BASE_LIMIT) * normalized.incomeTaxRate)
+    }))
+    .filter((item) => item.year < currentYear && !claimed.has(item.year) && item.amount > 0)
+    .sort((a, b) => a.year - b.year);
+
+  return {
+    enabled: true,
+    openDate: normalized.iisOpenDate,
+    ageYears,
+    minYears: normalized.iisMinYears,
+    profitExemptionYears: normalized.iisProfitExemptionYears,
+    minTermDate: minTermDate ? formatDate(minTermDate) : null,
+    profitExemptionDate: profitExemptionDate ? formatDate(profitExemptionDate) : null,
+    canCloseWithoutDeductionClawback,
+    profitTaxExemptionLikely,
+    deductionBaseLimit: IIS_DEDUCTION_BASE_LIMIT,
+    incomeTaxRate: normalized.incomeTaxRate,
+    contributionsByYear,
+    claimedDeductionYears: normalized.claimedDeductionYears,
+    pendingDeductionYears,
+    warnings
+  };
+}
+
+function buildIisRecommendations(iisSummary) {
+  if (!iisSummary?.enabled) return [];
   const recommendations = [];
+
+  if (iisSummary.warnings?.length) {
+    recommendations.push({
+      action: 'tax',
+      title: 'Заполните настройки ИИС-3',
+      detail: iisSummary.warnings.join(' '),
+      phase: null,
+      candidates: []
+    });
+  }
+
+  for (const year of iisSummary.pendingDeductionYears || []) {
+    recommendations.push({
+      action: 'tax',
+      title: 'Пора подать на вычет за ' + year.year + ' год',
+      detail: 'На ИИС внесено ' + roundMoney(year.amount) + ' ₽. Ориентировочная база вычета ' + roundMoney(year.deductionBase) + ' ₽, возможный возврат около ' + roundMoney(year.estimatedRefund) + ' ₽ при указанной ставке НДФЛ.',
+      phase: null,
+      candidates: []
+    });
+  }
+
+  if (iisSummary.openDate && !iisSummary.canCloseWithoutDeductionClawback) {
+    recommendations.push({
+      action: 'tax',
+      title: 'Не планируйте вывод с ИИС-3 раньше минимального срока',
+      detail: 'Минимальный срок для сохранения вычетов по настройкам: до ' + iisSummary.minTermDate + '. Досрочное закрытие может привести к возврату вычетов и пеням.',
+      phase: null,
+      candidates: []
+    });
+  }
+
+  return recommendations;
+}
+
+function buildWithdrawalPlan(input = {}) {
+  const amount = toFiniteNumber(input.amount);
+  const settings = normalizeSettings(input.settings);
+  const positions = input.positions || [];
+  const quotes = input.quotes || {};
+  const allocation = input.allocation || [];
+  const cash = input.cash || { balance: 0 };
+  const iisSummary = input.iisSummary || buildIisSummary(input.cashMovements || [], settings);
+  const errors = [];
+
+  if (!amount || amount <= 0) errors.push('Укажите сумму вывода больше 0.');
+  if (errors.length) return { valid: false, errors, amount: amount || 0, sales: [] };
+
+  const warnings = [];
+  if (settings.accountType === 'iis3') {
+    warnings.push('На ИИС-3 вывод денег обычно означает закрытие счета или отдельную процедуру у брокера. Перед выводом проверьте правила брокера и налогового агента.');
+    if (!iisSummary.canCloseWithoutDeductionClawback) {
+      warnings.push('Минимальный срок ИИС-3 еще не прошел' + (iisSummary.minTermDate ? ': ориентир ' + iisSummary.minTermDate : '') + '. Возможен возврат вычетов и пени.');
+    }
+    if (!iisSummary.profitTaxExemptionLikely) {
+      warnings.push('Льгота на положительный финансовый результат не отмечена как безопасная до ' + (iisSummary.profitExemptionDate || 'указанного срока') + '; прибыльные продажи помечены налоговым риском.');
+    }
+  }
+
+  const usableCash = Math.max(0, Math.min(cash.balance || 0, amount));
+  let remainingNet = amount - usableCash;
+  const candidates = positions
+    .map((position) => buildWithdrawalCandidate(position, quotes[position.ticker] || {}, allocation, settings, iisSummary))
+    .filter((candidate) => candidate.maxLots > 0 && candidate.netPerLot > 0)
+    .sort((a, b) => b.priorityScore - a.priorityScore);
+
+  const sales = [];
+  for (const candidate of candidates) {
+    if (remainingNet <= 0.01) break;
+    const lots = Math.min(candidate.maxLots, Math.ceil(remainingNet / candidate.netPerLot));
+    if (lots <= 0) continue;
+    const quantity = lots * candidate.lotSize;
+    const gross = quantity * candidate.price;
+    const commission = gross * settings.commissionRate;
+    const net = gross - commission;
+    sales.push({
+      ticker: candidate.ticker,
+      name: candidate.name,
+      assetClass: candidate.assetClass,
+      lots,
+      quantity: roundQuantity(quantity),
+      price: roundMoney(candidate.price),
+      gross: roundMoney(gross),
+      commission: roundMoney(commission),
+      net: roundMoney(net),
+      taxStatus: candidate.taxStatus,
+      taxRisk: candidate.taxRisk,
+      reason: candidate.reason,
+      priorityScore: Math.round(candidate.priorityScore)
+    });
+    remainingNet -= net;
+  }
+
+  return {
+    valid: true,
+    amount: roundMoney(amount),
+    cashUsed: roundMoney(usableCash),
+    targetFromSales: roundMoney(Math.max(amount - usableCash, 0)),
+    estimatedNet: roundMoney(usableCash + sales.reduce((sum, sale) => sum + sale.net, 0)),
+    shortfall: roundMoney(Math.max(remainingNet, 0)),
+    sales,
+    warnings
+  };
+}
+
+function buildWithdrawalCandidate(position, quote, allocation, settings, iisSummary) {
+  const lotSize = Number(quote.lotSize || 1);
+  const price = Number(quote.price || position.lastPrice || 0);
+  const maxLots = Math.floor(position.quantity / lotSize);
+  const grossPerLot = lotSize * price;
+  const netPerLot = grossPerLot * (1 - settings.commissionRate);
+  const analysis = quote.analysis || {};
+  const allocationItem = allocation.find((item) => item.key === position.assetClass);
+  const overweight = allocationItem ? allocationItem.drift > 0.03 : false;
+  const gain = position.marketValue - position.costBasis;
+  const gainPct = position.costBasis > 0 ? gain / position.costBasis : 0;
+  const taxStatus = getIisTaxStatus(gain, iisSummary);
+  const taxBonus = taxStatus.risk === 'low' ? 40 : taxStatus.risk === 'medium' ? 10 : -35;
+  const overbought = Number(analysis.overboughtScore || 0);
+  const weakBuy = Math.max(0, 60 - Number(analysis.buyScore || 0));
+  const overweightBonus = overweight ? 25 : 0;
+  const gainBonus = taxStatus.risk === 'low' ? Math.max(0, Math.min(gainPct * 100, 25)) : -Math.max(0, Math.min(gainPct * 100, 25));
+
+  return {
+    ticker: position.ticker,
+    name: position.name,
+    assetClass: position.assetClass,
+    lotSize,
+    price,
+    maxLots,
+    netPerLot,
+    taxStatus: taxStatus.label,
+    taxRisk: taxStatus.risk,
+    priorityScore: taxBonus + overbought * 0.45 + weakBuy * 0.4 + overweightBonus + gainBonus,
+    reason: [
+      overweight ? 'категория выше целевой доли' : null,
+      overbought >= 70 ? 'перекупленность ' + overbought + '/100' : null,
+      Number(analysis.buyScore || 0) < 40 ? 'низкий buy score ' + analysis.buyScore + '/100' : null,
+      taxStatus.label
+    ].filter(Boolean).join('; ')
+  };
+}
+
+function getIisTaxStatus(gain, iisSummary = {}) {
+  if (gain <= 0) {
+    return { risk: 'low', label: 'налога на прибыль не ожидается: позиция без прибыли или в минусе' };
+  }
+
+  if (iisSummary.profitTaxExemptionLikely) {
+    return { risk: 'low', label: 'низкий риск: срок льготы на финрезультат отмечен как пройденный' };
+  }
+
+  if (iisSummary.canCloseWithoutDeductionClawback) {
+    return { risk: 'medium', label: 'средний риск: срок ИИС для вычетов пройден, но льготу на финрезультат нужно проверить у брокера' };
+  }
+
+  return { risk: 'high', label: 'высокий риск: прибыльная продажа до безопасного срока ИИС-3' };
+}
+
+function buildContributionsByYear(cashMovements = []) {
+  return cashMovements.reduce((acc, movement) => {
+    if (movement.type !== 'deposit') return acc;
+    const year = Number(String(movement.date || '').slice(0, 4));
+    const amount = toFiniteNumber(movement.amount);
+    if (!year || !amount) return acc;
+    acc[year] = roundMoney((acc[year] || 0) + amount);
+    return acc;
+  }, {});
+}
+
+function addYears(date, years) {
+  const result = new Date(date);
+  result.setUTCFullYear(result.getUTCFullYear() + years);
+  return result;
+}
+
+function yearsBetween(start, end) {
+  return Math.max(0, (end.getTime() - start.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+}
+
+function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildRecommendations(positions, allocation, cash, totalAssets, quotes = {}, settings = {}, iisSummary = null) {
+  const recommendations = [];
+  recommendations.push(...buildIisRecommendations(iisSummary));
   const sellIdeas = buildSellIdeas(positions, allocation, quotes);
   recommendations.push(...sellIdeas);
 
@@ -601,12 +885,18 @@ function formatPercent(value) {
 module.exports = {
   RUB,
   DEFAULT_COMMISSION_RATE,
+  DEFAULT_IIS_MIN_YEARS,
+  DEFAULT_IIS_PROFIT_EXEMPTION_YEARS,
+  DEFAULT_INCOME_TAX_RATE,
+  IIS_DEDUCTION_BASE_LIMIT,
   TARGET_ALLOCATION,
   BUILD_ORDER,
   MARKET_UNIVERSE,
   FALLBACK_INSTRUMENTS,
+  buildIisSummary,
   buildPortfolio,
   buildPositions,
+  buildWithdrawalPlan,
   calculateCash,
   classifyInstrument,
   findBuildPhase,

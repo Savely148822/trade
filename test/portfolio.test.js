@@ -4,8 +4,10 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  buildIisSummary,
   buildPortfolio,
   buildPositions,
+  buildWithdrawalPlan,
   calculateCash,
   classifyInstrument,
   scoreInstrument,
@@ -14,7 +16,7 @@ const {
   validateTransaction
 } = require('../src/portfolio');
 
-const settings = { commissionRate: 0.0006 };
+const settings = { commissionRate: 0.0006, accountType: 'iis3', iisOpenDate: '2024-01-15', incomeTaxRate: 0.13, iisMinYears: 5, iisProfitExemptionYears: 10 };
 
 test('cash balance accounts for broker commission on buy and sell', () => {
   const buy = tx({ type: 'buy', ticker: 'SBER', quantity: 10, price: 300 });
@@ -139,3 +141,49 @@ function quoted(symbol, assetClass, analysis, price = 300) {
     analysis
   };
 }
+
+test('IIS summary reminds to claim deduction for previous unclaimed contribution year', () => {
+  const summary = buildIisSummary(
+    [{ type: 'deposit', amount: 400000, date: '2025-06-01' }],
+    { ...settings, claimedDeductionYears: [] },
+    new Date('2026-02-01T00:00:00.000Z')
+  );
+
+  assert.equal(summary.pendingDeductionYears.length, 1);
+  assert.equal(summary.pendingDeductionYears[0].year, 2025);
+  assert.equal(summary.pendingDeductionYears[0].estimatedRefund, 52000);
+  assert.equal(summary.canCloseWithoutDeductionClawback, false);
+});
+
+test('withdrawal plan prefers low-tax loss position before profitable IIS position', () => {
+  const portfolio = buildPortfolio(
+    [
+      tx({ ticker: 'SBER', quantity: 10, price: 350 }),
+      tx({ ticker: 'GAZP', quantity: 10, price: 200 })
+    ],
+    {
+      SBER: quoted('SBER', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300),
+      GAZP: quoted('GAZP', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300)
+    },
+    settings,
+    [{ type: 'deposit', amount: 10000, date: '2025-01-01' }]
+  );
+
+  const plan = buildWithdrawalPlan({
+    amount: 2500,
+    positions: portfolio.positions,
+    quotes: {
+      SBER: quoted('SBER', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300),
+      GAZP: quoted('GAZP', 'blue_chips', { buyScore: 30, overboughtScore: 80 }, 300)
+    },
+    allocation: portfolio.allocation,
+    cash: { balance: 0 },
+    settings,
+    iisSummary: portfolio.iis
+  });
+
+  assert.equal(plan.valid, true);
+  assert.equal(plan.sales[0].ticker, 'SBER');
+  assert.equal(plan.sales[0].taxRisk, 'low');
+  assert.ok(plan.warnings.some((warning) => warning.includes('ИИС-3')));
+});

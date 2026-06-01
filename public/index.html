@@ -31,7 +31,19 @@
               Комиссия за сделку, %
               <input name="commissionPercent" type="number" min="0" max="5" step="0.001" value="0.06" required />
             </label>
-            <button class="button" type="submit">Сохранить комиссию</button>
+            <label>
+              Дата открытия ИИС-3
+              <input name="iisOpenDate" type="date" />
+            </label>
+            <label>
+              Уже полученные вычеты за годы
+              <input name="claimedDeductionYears" placeholder="2024, 2025" />
+            </label>
+            <label>
+              Ставка НДФЛ для оценки вычета, %
+              <input name="incomeTaxPercent" type="number" min="0" max="30" step="0.1" value="13" />
+            </label>
+            <button class="button" type="submit">Сохранить настройки</button>
             <p id="settings-message" class="message" role="status"></p>
           </form>
         </section>
@@ -101,6 +113,18 @@
             <p id="trade-message" class="message" role="status"></p>
           </form>
         </section>
+        <section class="panel">
+          <h2>3. План вывода с ИИС-3</h2>
+          <form id="withdrawal-form" class="form">
+            <label>
+              Сколько хочу вывести, ₽
+              <input name="amount" type="number" min="1" step="0.01" placeholder="100000" required />
+            </label>
+            <button class="button" type="submit">Подобрать бумаги к продаже</button>
+            <p id="withdrawal-message" class="message" role="status"></p>
+          </form>
+        </section>
+
       </aside>
 
       <section class="dashboard">
@@ -131,6 +155,17 @@
             </div>
           </div>
           <div id="recommendations" class="recommendations"></div>
+        </section>
+
+        
+        <section class="panel">
+          <div class="panel__header">
+            <div>
+              <h2>План вывода</h2>
+              <p>Сначала используется свободный кеш, затем бумаги с лучшим сочетанием выгоды, перегрева и налогового риска.</p>
+            </div>
+          </div>
+          <div id="withdrawal-plan" class="history-list"></div>
         </section>
 
         <section class="panel">

@@ -10,6 +10,7 @@ const {
   MARKET_UNIVERSE,
   buildPortfolio,
   buildPositions,
+  buildWithdrawalPlan,
   calculateCash,
   classifyInstrument,
   getUniverseTickers,
@@ -34,7 +35,13 @@ const DEFAULT_DATA = {
   quotes: {},
   blueChipTickers: [],
   settings: {
-    commissionRate: 0.0006
+    commissionRate: 0.0006,
+    accountType: 'iis3',
+    iisOpenDate: '',
+    claimedDeductionYears: [],
+    incomeTaxRate: 0.13,
+    iisMinYears: 5,
+    iisProfitExemptionYears: 10
   }
 };
 
@@ -95,6 +102,25 @@ async function routeApi(request, response, url) {
     data.settings = validation.value;
     await saveData(data);
     return sendJson(response, { settings: data.settings });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/withdrawal-plan') {
+    const body = await readJsonBody(request);
+    const data = await loadData();
+    await hydrateMarketData(data, body.refresh === true);
+    await saveData(data);
+    const portfolio = buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements);
+    const plan = buildWithdrawalPlan({
+      amount: body.amount,
+      positions: portfolio.positions,
+      quotes: data.quotes,
+      allocation: portfolio.allocation,
+      cash: portfolio.cash,
+      settings: data.settings,
+      iisSummary: portfolio.iis,
+      cashMovements: data.cashMovements
+    });
+    return sendJson(response, { plan });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/cash/deposits') {
