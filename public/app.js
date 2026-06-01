@@ -163,6 +163,7 @@ function render() {
 
   renderSettings(state.portfolio.settings);
   renderTotals(state.portfolio);
+  renderDailyAnalysis(state.portfolio.dailyAnalysis);
   renderRecommendations(state.portfolio.recommendations);
   renderAllocation(state.portfolio.allocation);
   renderPositions(state.portfolio.positions);
@@ -187,6 +188,43 @@ function renderTotals(portfolio) {
   pnl.className = portfolio.totals.unrealizedPnl >= 0 ? 'positive' : 'negative';
 }
 
+function renderDailyAnalysis(analysis) {
+  const root = document.querySelector('#daily-analysis');
+  if (!root) return;
+
+  if (!analysis) {
+    root.innerHTML = '<p class="message">Отчет появится после обновления рынка.</p>';
+    return;
+  }
+
+  const impacts = (analysis.portfolio?.biggestImpacts || []).map((item) => `
+    <article class="history-item">
+      <div>
+        <strong>${item.ticker}: ${formatMoney(item.dailyPnl)}</strong>
+        <br>
+        <small>${formatPercent(item.changePercent)} за день · ${escapeHtml(item.reason || '')}</small>
+      </div>
+      <span class="tag">${item.buyScore}/100</span>
+    </article>
+  `).join('');
+  const risers = (analysis.market?.risers || []).slice(0, 3).map((item) => `<span class="tag positive">${item.symbol} ${formatPercent(item.changePercent)}</span>`).join('');
+  const fallers = (analysis.market?.fallers || []).slice(0, 3).map((item) => `<span class="tag negative">${item.symbol} ${formatPercent(item.changePercent)}</span>`).join('');
+  const buy = analysis.actions?.buy;
+  const sells = (analysis.actions?.sells || []).map((item) => `<li>${escapeHtml(item.title)}${item.amount ? ` · ${formatMoney(item.amount)}` : ''}</li>`).join('');
+
+  root.innerHTML = `
+    <article class="recommendation">
+      <h3>${escapeHtml(analysis.headline)}</h3>
+      <p>${escapeHtml(analysis.portfolio?.explanation || '')}</p>
+      <p>Рынок MOEX: растут ${analysis.market?.advancing || 0}, падают ${analysis.market?.declining || 0} из ${analysis.market?.trackedCount || 0} отслеживаемых.</p>
+      <div>${risers}</div>
+      <div>${fallers}</div>
+      ${buy ? `<p><strong>Докупить:</strong> ${escapeHtml(buy.title)}${buy.amount ? ` · ${formatMoney(buy.amount)}` : ''}</p>` : ''}
+      ${sells ? `<details open><summary>Что можно сократить</summary><ul>${sells}</ul></details>` : ''}
+    </article>
+    ${impacts || '<p class="message">Пока нет позиций для анализа портфеля.</p>'}
+  `;
+}
 function renderRecommendations(recommendations) {
   const root = document.querySelector('#recommendations');
 

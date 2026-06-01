@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  buildDailyAnalysis,
   buildIisSummary,
   buildPortfolio,
   buildPositions,
@@ -186,4 +187,43 @@ test('withdrawal plan prefers low-tax loss position before profitable IIS positi
   assert.equal(plan.sales[0].ticker, 'SBER');
   assert.equal(plan.sales[0].taxRisk, 'low');
   assert.ok(plan.warnings.some((warning) => warning.includes('ИИС-3')));
+});
+
+test('daily analysis explains portfolio moves and market breadth', () => {
+  const portfolio = buildPortfolio(
+    [tx({ ticker: 'SBER', quantity: 10, price: 300 })],
+    {
+      SBER: {
+        ...quoted('SBER', 'blue_chips', { buyScore: 70, overboughtScore: 10 }, 330),
+        changePercent: 0.02,
+        turnover: 600000000
+      },
+      GAZP: {
+        ...quoted('GAZP', 'blue_chips', { buyScore: 45, overboughtScore: 20 }, 160),
+        symbol: 'GAZP',
+        changePercent: -0.03
+      }
+    },
+    settings,
+    [{ type: 'deposit', amount: 10000, date: '2025-01-01' }]
+  );
+
+  const analysis = buildDailyAnalysis(portfolio, {
+    SBER: {
+      ...quoted('SBER', 'blue_chips', { buyScore: 70, overboughtScore: 10 }, 330),
+      changePercent: 0.02,
+      turnover: 600000000
+    },
+    GAZP: {
+      ...quoted('GAZP', 'blue_chips', { buyScore: 45, overboughtScore: 20 }, 160),
+      symbol: 'GAZP',
+      changePercent: -0.03
+    }
+  });
+
+  assert.ok(analysis.headline.includes('портфель вырос'));
+  assert.equal(analysis.market.advancing, 1);
+  assert.equal(analysis.market.declining, 1);
+  assert.equal(analysis.portfolio.biggestImpacts[0].ticker, 'SBER');
+  assert.ok(analysis.portfolio.biggestImpacts[0].reason.includes('ростом цены'));
 });

@@ -367,7 +367,7 @@ function buildPortfolio(transactions, quotes = {}, settings = {}, cashMovements 
     };
   });
 
-  return {
+  const portfolio = {
     market: 'MOEX',
     dataSource: 'MOEX ISS',
     currency: RUB,
@@ -390,8 +390,128 @@ function buildPortfolio(transactions, quotes = {}, settings = {}, cashMovements 
       currency: RUB
     }
   };
+
+  portfolio.dailyAnalysis = buildDailyAnalysis(portfolio, quotes);
+  return portfolio;
 }
 
+function buildDailyAnalysis(portfolio, quotes = {}) {
+  const positions = portfolio.positions || [];
+  const investedValue = portfolio.totals?.investedValue || 0;
+  const marketItems = Object.values(quotes)
+    .filter((quote) => quote?.symbol && Number.isFinite(Number(quote.changePercent)))
+    .map((quote) => ({
+      symbol: quote.symbol,
+      name: quote.name || quote.symbol,
+      assetClass: quote.assetClass || classifyInstrument(quote),
+      changePercent: Number(quote.changePercent || 0),
+      price: Number(quote.price || 0),
+      turnover: Number(quote.turnover || 0),
+      buyScore: Number(quote.analysis?.buyScore || 0),
+      overboughtScore: Number(quote.analysis?.overboughtScore || 0)
+    }))
+    .sort((a, b) => Math.abs(b.changePercent) - Math.abs(a.changePercent));
+
+  const risers = [...marketItems].sort((a, b) => b.changePercent - a.changePercent).slice(0, 5);
+  const fallers = [...marketItems].sort((a, b) => a.changePercent - b.changePercent).slice(0, 5);
+  const breadthItems = marketItems.filter((item) => item.changePercent !== 0);
+  const advancing = breadthItems.filter((item) => item.changePercent > 0).length;
+  const declining = breadthItems.filter((item) => item.changePercent < 0).length;
+
+  const positionImpacts = positions.map((position) => {
+    const quote = quotes[position.ticker] || position.quote || {};
+    const changePercent = Number(quote.changePercent || 0);
+    const previousValue = changePercent > -0.99 ? position.marketValue / (1 + changePercent) : position.marketValue;
+    const dailyPnl = position.marketValue - previousValue;
+    const analysis = quote.analysis || {};
+
+    return {
+      ticker: position.ticker,
+      name: position.name || position.ticker,
+      assetClass: position.assetClass,
+      marketValue: position.marketValue,
+      changePercent,
+      dailyPnl: roundMoney(dailyPnl),
+      contributionPct: investedValue > 0 ? dailyPnl / investedValue : 0,
+      buyScore: Number(analysis.buyScore || 0),
+      overboughtScore: Number(analysis.overboughtScore || 0),
+      reason: explainPositionMove(quote, changePercent)
+    };
+  }).sort((a, b) => Math.abs(b.dailyPnl) - Math.abs(a.dailyPnl));
+
+  const dailyPnl = positionImpacts.reduce((sum, item) => sum + item.dailyPnl, 0);
+  const dailyPnlPct = investedValue > 0 ? dailyPnl / investedValue : 0;
+  const buyAction = (portfolio.recommendations || []).find((item) => item.action === 'buy');
+  const sellActions = (portfolio.recommendations || []).filter((item) => item.action === 'sell').slice(0, 3);
+  const taxActions = (portfolio.recommendations || []).filter((item) => item.action === 'tax').slice(0, 2);
+
+  return {
+    asOf: new Date().toISOString(),
+    headline: buildDailyHeadline(dailyPnl, dailyPnlPct, advancing, declining),
+    market: {
+      source: 'MOEX ISS',
+      trackedCount: marketItems.length,
+      advancing,
+      declining,
+      risers,
+      fallers
+    },
+    portfolio: {
+      dailyPnl: roundMoney(dailyPnl),
+      dailyPnlPct,
+      investedValue: roundMoney(investedValue),
+      biggestImpacts: positionImpacts.slice(0, 5),
+      explanation: buildPortfolioExplanation(positionImpacts, dailyPnl)
+    },
+    actions: {
+      buy: buyAction ? summarizeAction(buyAction) : null,
+      sells: sellActions.map(summarizeAction),
+      taxes: taxActions.map(summarizeAction)
+    }
+  };
+}
+
+function explainPositionMove(quote, changePercent) {
+  const parts = [];
+  const analysis = quote.analysis || {};
+
+  if (changePercent > 0.01) parts.push('позиция выросла вслед за дневным ростом цены');
+  if (changePercent < -0.01) parts.push('позиция снизилась вслед за дневным падением цены');
+  if (Math.abs(changePercent) <= 0.01) parts.push('дневное движение небольшое');
+  if (analysis.overboughtScore >= 70) parts.push('есть признаки перекупленности');
+  if (analysis.buyScore && analysis.buyScore < 40) parts.push('низкий buy score указывает на слабую идею для докупки');
+  if (analysis.buyScore && analysis.buyScore >= 75 && changePercent < 0) parts.push('просадка может быть кандидатом на докупку, если категория ниже цели');
+  if (quote.turnover) parts.push('ликвидность подтверждается оборотом MOEX');
+
+  return parts.join('; ') + '.';
+}
+
+function buildDailyHeadline(dailyPnl, dailyPnlPct, advancing, declining) {
+  const direction = dailyPnl > 0 ? 'портфель вырос' : dailyPnl < 0 ? 'портфель снизился' : 'портфель почти не изменился';
+  const breadth = advancing || declining ? 'На рынке из отслеживаемых бумаг растут ' + advancing + ', падают ' + declining + '.' : 'По рынку мало дневных изменений.';
+  return 'За день ' + direction + ' на ' + roundMoney(Math.abs(dailyPnl)) + ' ₽ (' + formatPercent(Math.abs(dailyPnlPct)) + '). ' + breadth;
+}
+
+function buildPortfolioExplanation(positionImpacts, dailyPnl) {
+  if (!positionImpacts.length) return 'В портфеле пока нет позиций, анализировать рост и падение нечего.';
+  const leader = positionImpacts[0];
+  const direction = dailyPnl >= 0 ? 'Основной вклад в движение дал' : 'Главный отрицательный вклад дал';
+  return direction + ' ' + leader.ticker + ': ' + leader.reason;
+}
+
+function summarizeAction(action) {
+  const candidate = action.candidates?.[0];
+  return {
+    action: action.action,
+    title: action.title,
+    detail: action.detail,
+    ticker: candidate?.symbol || null,
+    name: candidate?.name || null,
+    score: candidate?.analysis?.buyScore ?? null,
+    overboughtScore: candidate?.analysis?.overboughtScore ?? null,
+    amount: action.estimatedCost || action.estimatedSellAmount || null
+  };
+}
 function buildIisSummary(cashMovements = [], settings = {}, today = new Date()) {
   const normalized = normalizeSettings(settings);
   if (normalized.accountType !== 'iis3') {
@@ -893,6 +1013,7 @@ module.exports = {
   BUILD_ORDER,
   MARKET_UNIVERSE,
   FALLBACK_INSTRUMENTS,
+  buildDailyAnalysis,
   buildIisSummary,
   buildPortfolio,
   buildPositions,

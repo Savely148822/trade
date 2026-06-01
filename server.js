@@ -83,6 +83,14 @@ async function routeApi(request, response, url) {
     return sendJson(response, buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements));
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/daily-analysis') {
+    const data = await loadData();
+    await hydrateMarketData(data, url.searchParams.get('refresh') === '1');
+    await saveData(data);
+    const portfolio = buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements);
+    return sendJson(response, portfolio.dailyAnalysis);
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/watchlist') {
     return sendJson(response, {
       universe: MARKET_UNIVERSE,
