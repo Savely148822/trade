@@ -440,7 +440,7 @@ function findBuildPhase(allocation, totalAssets) {
 }
 
 function pickAffordableCandidate(assetClass, cashBalance, positions, quotes = {}, watchlist = MOEX_WATCHLIST) {
-  const instruments = (watchlist[assetClass] || []).map((instrument) => {
+  const instruments = (watchlist[assetClass] || []).map((instrument, index) => {
     const quotePrice = toFiniteNumber(quotes[instrument.symbol]?.price);
     const price = quotePrice || instrument.referencePrice;
     const lotSize = instrument.lotSize || 1;
@@ -457,13 +457,14 @@ function pickAffordableCandidate(assetClass, cashBalance, positions, quotes = {}
       },
       price,
       lotCost: price * lotSize,
-      heldValue
+      heldValue,
+      index
     };
   });
 
   const affordable = instruments
     .filter((candidate) => candidate.lotCost <= cashBalance)
-    .sort((a, b) => a.heldValue - b.heldValue || a.lotCost - b.lotCost)[0];
+    .sort((a, b) => a.heldValue - b.heldValue || a.index - b.index)[0];
 
   if (affordable) {
     return {
