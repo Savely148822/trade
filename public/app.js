@@ -2,7 +2,8 @@
 
 const state = {
   portfolio: null,
-  watchlist: {}
+  watchlist: {},
+  user: null
 };
 
 const assetLabels = {
@@ -11,6 +12,11 @@ const assetLabels = {
   growth: 'Рост'
 };
 
+const loginForm = document.querySelector('#login-form');
+const registerForm = document.querySelector('#register-form');
+const logoutButton = document.querySelector('#logout-button');
+const authMessage = document.querySelector('#auth-message');
+const authUser = document.querySelector('#auth-user');
 const settingsForm = document.querySelector('#settings-form');
 const depositForm = document.querySelector('#deposit-form');
 const transactionForm = document.querySelector('#transaction-form');
@@ -25,8 +31,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   const today = new Date().toISOString().slice(0, 10);
   depositForm.elements.date.value = today;
   transactionForm.elements.date.value = today;
-  await loadWatchlist();
-  await loadPortfolio();
+  await checkAuth();
+  if (state.user) {
+    await loadWatchlist();
+    await loadPortfolio();
+  }
+});
+
+
+loginForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await submitAuth('/api/auth/login', loginForm, 'Вход выполнен.');
+});
+
+registerForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await submitAuth('/api/auth/register', registerForm, 'Регистрация выполнена.');
+});
+
+logoutButton.addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  state.user = null;
+  state.portfolio = null;
+  renderAuth();
+  setMessage(authMessage, 'Вы вышли из сервиса.');
 });
 
 refreshButton.addEventListener('click', () => loadPortfolio(true));
@@ -128,6 +156,52 @@ transactionForm.addEventListener('submit', async (event) => {
   }
 });
 
+
+async function checkAuth() {
+  try {
+    const response = await fetch('/api/auth/me');
+    if (!response.ok) {
+      state.user = null;
+      renderAuth();
+      return;
+    }
+    const result = await response.json();
+    state.user = result.user;
+    renderAuth();
+  } catch {
+    state.user = null;
+    renderAuth();
+  }
+}
+
+async function submitAuth(url, form, successMessage) {
+  setMessage(authMessage, 'Проверяю данные...');
+  const payload = Object.fromEntries(new FormData(form).entries());
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
+    state.user = result.user;
+    form.reset();
+    renderAuth();
+    setMessage(authMessage, successMessage, 'ok');
+    await loadWatchlist();
+    await loadPortfolio(true);
+  } catch (error) {
+    setMessage(authMessage, error.message, 'error');
+  }
+}
+
+function renderAuth() {
+  document.body.classList.toggle('guest', !state.user);
+  authUser.textContent = state.user ? 'Вы вошли как ' + state.user.name + ' (' + state.user.email + ')' : 'Войдите или зарегистрируйтесь, чтобы открыть личный портфель.';
+}
+
 async function loadWatchlist() {
   const response = await fetch('/api/watchlist');
   state.watchlist = await response.json();
@@ -148,6 +222,11 @@ async function loadPortfolio(refresh = false) {
 
   try {
     const response = await fetch(`/api/portfolio${refresh ? '?refresh=1' : ''}`);
+    if (response.status === 401) {
+      state.user = null;
+      renderAuth();
+      throw new Error('Войдите в аккаунт, чтобы открыть портфель.');
+    }
     state.portfolio = await response.json();
     render();
   } catch (error) {

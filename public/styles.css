@@ -454,3 +454,24 @@ details ul {
   margin: 0.5rem 0 0;
   padding-left: 1.2rem;
 }
+
+.guest .requires-auth {
+  display: none !important;
+}
+
+.auth-register {
+  border-top: 1px solid var(--line);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.auth-user {
+  margin-bottom: 1rem;
+  color: var(--muted);
+}
+
+.guest #logout-button,
+body:not(.guest) #login-form,
+body:not(.guest) #register-form {
+  display: none;
+}

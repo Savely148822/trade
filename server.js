@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { URL } = require('node:url');
 
 const {
@@ -24,12 +25,15 @@ const {
 } = require('./src/portfolio');
 
 const PORT = Number(process.env.PORT || 3000);
-const DATA_FILE = path.join(__dirname, 'data', 'portfolio.json');
+const STORE_FILE = path.join(__dirname, 'data', 'service.json');
+const APP_SECRET = process.env.APP_SECRET || 'dev-secret-change-me';
+const SESSION_COOKIE = 'portfolio_session';
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
 
-const DEFAULT_DATA = {
+const DEFAULT_PORTFOLIO = {
   cashMovements: [],
   transactions: [],
   quotes: {},
@@ -52,43 +56,164 @@ const MIME_TYPES = {
   '.json': 'application/json; charset=utf-8'
 };
 
-async function loadData() {
-  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
+function createDefaultPortfolio() {
+  return structuredClone(DEFAULT_PORTFOLIO);
+}
+
+async function loadStore() {
+  await fs.mkdir(path.dirname(STORE_FILE), { recursive: true });
 
   try {
-    const raw = await fs.readFile(DATA_FILE, 'utf8');
+    const raw = await fs.readFile(STORE_FILE, 'utf8');
     const parsed = JSON.parse(raw);
     return {
-      ...DEFAULT_DATA,
-      ...parsed,
-      settings: normalizeSettings(parsed.settings)
+      users: Array.isArray(parsed.users) ? parsed.users.map(normalizeStoredUser) : []
     };
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
-    await saveData(DEFAULT_DATA);
-    return structuredClone(DEFAULT_DATA);
+    const store = { users: [] };
+    await saveStore(store);
+    return store;
   }
 }
 
-async function saveData(data) {
-  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
-  await fs.writeFile(DATA_FILE, `${JSON.stringify(data, null, 2)}\n`);
+async function saveStore(store) {
+  await fs.mkdir(path.dirname(STORE_FILE), { recursive: true });
+  await fs.writeFile(STORE_FILE, JSON.stringify(store, null, 2) + '\n');
+}
+
+function normalizeStoredUser(user) {
+  return {
+    id: user.id,
+    email: normalizeEmail(user.email),
+    name: String(user.name || '').trim(),
+    passwordHash: user.passwordHash,
+    passwordSalt: user.passwordSalt,
+    createdAt: user.createdAt || new Date().toISOString(),
+    portfolio: normalizePortfolio(user.portfolio || {})
+  };
+}
+
+function normalizePortfolio(portfolio = {}) {
+  return {
+    ...createDefaultPortfolio(),
+    ...portfolio,
+    cashMovements: Array.isArray(portfolio.cashMovements) ? portfolio.cashMovements : [],
+    transactions: Array.isArray(portfolio.transactions) ? portfolio.transactions : [],
+    quotes: portfolio.quotes && typeof portfolio.quotes === 'object' ? portfolio.quotes : {},
+    blueChipTickers: Array.isArray(portfolio.blueChipTickers) ? portfolio.blueChipTickers : [],
+    settings: normalizeSettings(portfolio.settings || DEFAULT_PORTFOLIO.settings)
+  };
+}
+
+function sanitizeUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    createdAt: user.createdAt
+  };
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function validateAuthInput(body, mode) {
+  const errors = [];
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || '');
+  const name = String(body.name || '').trim();
+
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errors.push('Укажите корректный email.');
+  if (password.length < 8) errors.push('Пароль должен быть не короче 8 символов.');
+  if (mode === 'register' && !name) errors.push('Укажите имя.');
+
+  return { valid: errors.length === 0, errors, email, password, name };
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
+
+function verifyPassword(password, salt, expectedHash) {
+  const actual = Buffer.from(hashPassword(password, salt).hash, 'hex');
+  const expected = Buffer.from(expectedHash || '', 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function createSessionToken(userId) {
+  const payload = base64UrlEncode(JSON.stringify({ userId, exp: Date.now() + SESSION_TTL_MS }));
+  const signature = crypto.createHmac('sha256', APP_SECRET).update(payload).digest('base64url');
+  return payload + '.' + signature;
+}
+
+function verifySessionToken(token) {
+  const [payload, signature] = String(token || '').split('.');
+  if (!payload || !signature) return null;
+
+  const expected = crypto.createHmac('sha256', APP_SECRET).update(payload).digest('base64url');
+  if (!safeEqual(signature, expected)) return null;
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!session.userId || Date.now() > session.exp) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function base64UrlEncode(value) {
+  return Buffer.from(value).toString('base64url');
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function parseCookies(request) {
+  return Object.fromEntries(String(request.headers.cookie || '')
+    .split(';')
+    .map((cookie) => cookie.trim())
+    .filter(Boolean)
+    .map((cookie) => {
+      const index = cookie.indexOf('=');
+      return [decodeURIComponent(cookie.slice(0, index)), decodeURIComponent(cookie.slice(index + 1))];
+    }));
+}
+
+function sessionCookie(token) {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return SESSION_COOKIE + '=' + encodeURIComponent(token) + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=' + Math.floor(SESSION_TTL_MS / 1000) + secure;
+}
+
+function clearSessionCookie() {
+  return SESSION_COOKIE + '=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0';
+}
+
+async function getAuthContext(request) {
+  const store = await loadStore();
+  const session = verifySessionToken(parseCookies(request)[SESSION_COOKIE]);
+  const user = session ? store.users.find((item) => item.id === session.userId) : null;
+  return { store, user };
+}
+
+async function requireAuth(request, response) {
+  const context = await getAuthContext(request);
+  if (!context.user) {
+    sendJson(response, { error: 'Authentication required' }, 401);
+    return null;
+  }
+  return context;
 }
 
 async function routeApi(request, response, url) {
-  if (request.method === 'GET' && url.pathname === '/api/portfolio') {
-    const data = await loadData();
-    await hydrateMarketData(data, url.searchParams.get('refresh') === '1');
-    await saveData(data);
-    return sendJson(response, buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements));
-  }
-
-  if (request.method === 'GET' && url.pathname === '/api/daily-analysis') {
-    const data = await loadData();
-    await hydrateMarketData(data, url.searchParams.get('refresh') === '1');
-    await saveData(data);
-    const portfolio = buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements);
-    return sendJson(response, portfolio.dailyAnalysis);
+  if (url.pathname.startsWith('/api/auth/')) {
+    return routeAuth(request, response, url);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/watchlist') {
@@ -96,6 +221,24 @@ async function routeApi(request, response, url) {
       universe: MARKET_UNIVERSE,
       instruments: FALLBACK_INSTRUMENTS
     });
+  }
+
+  const context = await requireAuth(request, response);
+  if (!context) return;
+
+  const data = context.user.portfolio;
+
+  if (request.method === 'GET' && url.pathname === '/api/portfolio') {
+    await hydrateMarketData(data, url.searchParams.get('refresh') === '1');
+    await saveStore(context.store);
+    return sendJson(response, buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements));
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/daily-analysis') {
+    await hydrateMarketData(data, url.searchParams.get('refresh') === '1');
+    await saveStore(context.store);
+    const portfolio = buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements);
+    return sendJson(response, portfolio.dailyAnalysis);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/settings') {
@@ -106,17 +249,15 @@ async function routeApi(request, response, url) {
       return sendJson(response, { errors: validation.errors }, 400);
     }
 
-    const data = await loadData();
     data.settings = validation.value;
-    await saveData(data);
+    await saveStore(context.store);
     return sendJson(response, { settings: data.settings });
   }
 
   if (request.method === 'POST' && url.pathname === '/api/withdrawal-plan') {
     const body = await readJsonBody(request);
-    const data = await loadData();
     await hydrateMarketData(data, body.refresh === true);
-    await saveData(data);
+    await saveStore(context.store);
     const portfolio = buildPortfolio(data.transactions, data.quotes, data.settings, data.cashMovements);
     const plan = buildWithdrawalPlan({
       amount: body.amount,
@@ -139,15 +280,13 @@ async function routeApi(request, response, url) {
       return sendJson(response, { errors: validation.errors }, 400);
     }
 
-    const data = await loadData();
     data.cashMovements.push(validation.value);
-    await saveData(data);
+    await saveStore(context.store);
     return sendJson(response, { cashMovement: validation.value }, 201);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/transactions') {
     const body = await readJsonBody(request);
-    const data = await loadData();
     const instrument = await fetchMoexInstrument(normalizeTicker(body.ticker), data.blueChipTickers);
     const validation = validateTransaction({
       ...body,
@@ -182,29 +321,94 @@ async function routeApi(request, response, url) {
       asOf: instrument.asOf || new Date().toISOString()
     };
     data.transactions.push(validation.value);
-    await saveData(data);
+    await saveStore(context.store);
     return sendJson(response, { transaction: validation.value }, 201);
   }
 
   if (request.method === 'DELETE' && url.pathname.startsWith('/api/transactions/')) {
     const id = decodeURIComponent(url.pathname.replace('/api/transactions/', ''));
-    const data = await loadData();
     const before = data.transactions.length;
     data.transactions = data.transactions.filter((transaction) => transaction.id !== id);
-    await saveData(data);
+    await saveStore(context.store);
     return sendJson(response, { deleted: before !== data.transactions.length });
   }
 
   if (request.method === 'DELETE' && url.pathname.startsWith('/api/cash/deposits/')) {
     const id = decodeURIComponent(url.pathname.replace('/api/cash/deposits/', ''));
-    const data = await loadData();
     const before = data.cashMovements.length;
     data.cashMovements = data.cashMovements.filter((movement) => movement.id !== id);
-    await saveData(data);
+    await saveStore(context.store);
     return sendJson(response, { deleted: before !== data.cashMovements.length });
   }
 
   return sendJson(response, { error: 'API route not found' }, 404);
+}
+
+async function routeAuth(request, response, url) {
+  if (request.method === 'GET' && url.pathname === '/api/auth/me') {
+    const context = await getAuthContext(request);
+    if (!context.user) return sendJson(response, { user: null }, 401);
+    return sendJson(response, { user: sanitizeUser(context.user) });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/auth/register') {
+    const body = await readJsonBody(request);
+    const validation = validateAuthInput(body, 'register');
+
+    if (!validation.valid) {
+      return sendJson(response, { errors: validation.errors }, 400);
+    }
+
+    const store = await loadStore();
+    if (store.users.some((user) => user.email === validation.email)) {
+      return sendJson(response, { errors: ['Пользователь с таким email уже зарегистрирован.'] }, 409);
+    }
+
+    const password = hashPassword(validation.password);
+    const user = normalizeStoredUser({
+      id: 'usr_' + crypto.randomBytes(12).toString('hex'),
+      email: validation.email,
+      name: validation.name,
+      passwordHash: password.hash,
+      passwordSalt: password.salt,
+      createdAt: new Date().toISOString(),
+      portfolio: createDefaultPortfolio()
+    });
+    store.users.push(user);
+    await saveStore(store);
+
+    return sendJson(response, { user: sanitizeUser(user) }, 201, {
+      'set-cookie': sessionCookie(createSessionToken(user.id))
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+    const body = await readJsonBody(request);
+    const validation = validateAuthInput(body, 'login');
+
+    if (!validation.valid) {
+      return sendJson(response, { errors: validation.errors }, 400);
+    }
+
+    const store = await loadStore();
+    const user = store.users.find((item) => item.email === validation.email);
+
+    if (!user || !verifyPassword(validation.password, user.passwordSalt, user.passwordHash)) {
+      return sendJson(response, { errors: ['Неверный email или пароль.'] }, 401);
+    }
+
+    return sendJson(response, { user: sanitizeUser(user) }, 200, {
+      'set-cookie': sessionCookie(createSessionToken(user.id))
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
+    return sendJson(response, { ok: true }, 200, {
+      'set-cookie': clearSessionCookie()
+    });
+  }
+
+  return sendJson(response, { error: 'Auth route not found' }, 404);
 }
 
 async function hydrateMarketData(data, forceRefresh = false) {
@@ -472,10 +676,11 @@ function readJsonBody(request) {
   });
 }
 
-function sendJson(response, body, statusCode = 200) {
+function sendJson(response, body, statusCode = 200, headers = {}) {
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store'
+    'cache-control': 'no-store',
+    ...headers
   });
   response.end(JSON.stringify(body));
 }
