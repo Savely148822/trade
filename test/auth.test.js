@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 
-const { server } = require('../server');
+const { fetchMoexApproxPriceForDate, server } = require('../server');
 
 const storePath = path.join(__dirname, '..', 'data', 'service.sqlite');
 
@@ -77,3 +77,15 @@ function deposit(base, cookie, amount) {
     body: JSON.stringify({ amount, date: '2026-01-01' })
   });
 }
+
+test('MOEX historical price lookup returns approximate close for transaction date', async () => {
+  const price = await fetchMoexApproxPriceForDate({
+    symbol: 'SBER',
+    market: 'shares',
+    board: 'TQBR',
+    lotSize: 1
+  }, '2026-05-29');
+
+  assert.ok(price.price > 0);
+  assert.match(price.source, /^moex-history:/);
+});

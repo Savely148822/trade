@@ -133,7 +133,7 @@ depositForm.addEventListener('submit', async (event) => {
 
 transactionForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  setMessage(tradeMessage, 'Проверяю тикер на MOEX и сохраняю сделку...');
+  setMessage(tradeMessage, 'Проверяю тикер на MOEX и цену сделки...');
 
   const payload = Object.fromEntries(new FormData(transactionForm).entries());
 
@@ -149,7 +149,7 @@ transactionForm.addEventListener('submit', async (event) => {
 
     transactionForm.reset();
     transactionForm.elements.date.value = new Date().toISOString().slice(0, 10);
-    setMessage(tradeMessage, 'Сделка сохранена. Класс инструмента определен автоматически.', 'ok');
+    setMessage(tradeMessage, result.transaction.priceSource && result.transaction.priceSource !== 'manual' ? 'Сделка сохранена. Цена оценена по истории MOEX.' : 'Сделка сохранена. Класс инструмента определен автоматически.', 'ok');
     await loadPortfolio(true);
   } catch (error) {
     setMessage(tradeMessage, error.message, 'error');
@@ -530,7 +530,7 @@ function renderTransactions(transactions) {
             <br>
             <small>
               ${transaction.date} · ${formatQuantity(transaction.quantity)} шт. по
-              ${formatMoney(transaction.price)} · ${assetLabels[transaction.assetClass]}
+              ${formatMoney(transaction.price)} · ${assetLabels[transaction.assetClass]}${transaction.priceSource && transaction.priceSource !== 'manual' ? ' · цена: ' + transaction.priceSource : ''}
             </small>
           </div>
           <button class="link-button" type="button" data-delete-transaction="${transaction.id}">Удалить</button>

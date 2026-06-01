@@ -340,8 +340,19 @@ async function routeApi(request, response, url) {
   if (request.method === 'POST' && url.pathname === '/api/transactions') {
     const body = await readJsonBody(request);
     const instrument = await fetchMoexInstrument(normalizeTicker(body.ticker), data.blueChipTickers);
+    const enrichedBody = { ...body };
+    const providedPrice = Number(enrichedBody.price);
+
+    if (!Number.isFinite(providedPrice) || providedPrice <= 0) {
+      const approximate = await fetchMoexApproxPriceForDate(instrument, enrichedBody.date);
+      enrichedBody.price = approximate.price;
+      enrichedBody.priceSource = approximate.source;
+    } else {
+      enrichedBody.priceSource = 'manual';
+    }
+
     const validation = validateTransaction({
-      ...body,
+      ...enrichedBody,
       moexVerified: true,
       name: instrument.name,
       assetClass: instrument.assetClass
@@ -572,6 +583,7 @@ async function fetchMoexInstrument(ticker, blueChipTickers = []) {
     price,
     lotSize,
     lotCost: roundMoney(price * lotSize),
+    faceValue,
     previousPrice: firstNumber(security.PREVPRICE, security.PREVWAPRICE),
     changePercent: firstNumber(marketdata.LASTTOPREVPRICE, marketdata.WAPTOPREVWAPRICEPRCNT, 0) / 100,
     spreadPercent,
@@ -607,6 +619,56 @@ async function discoverMoexRoute(symbol) {
   return {
     market: preferred.market,
     board: preferred.boardid
+  };
+}
+
+async function fetchMoexApproxPriceForDate(instrument, dateValue) {
+  if (!instrument?.market || !instrument?.board) {
+    throw new Error('Не удалось определить режим торгов MOEX для оценки цены по дате.');
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateValue || ''))) {
+    throw new Error('Укажите цену вручную или выберите корректную дату сделки.');
+  }
+
+  const target = new Date(String(dateValue) + 'T00:00:00.000Z');
+  const from = new Date(target);
+  from.setUTCDate(from.getUTCDate() - 14);
+  const till = new Date(target);
+  till.setUTCDate(till.getUTCDate() + 3);
+
+  const url = 'https://iss.moex.com/iss/engines/stock/markets/' + instrument.market +
+    '/boards/' + instrument.board +
+    '/securities/' + encodeURIComponent(instrument.symbol) +
+    '/candles.json?iss.meta=off&from=' + from.toISOString().slice(0, 10) +
+    '&till=' + till.toISOString().slice(0, 10) +
+    '&interval=24';
+  const payload = await fetchJson(url);
+  const candles = tableRows(payload.candles)
+    .map((candle) => ({
+      ...candle,
+      close: Number(candle.close),
+      time: new Date(String(candle.begin).slice(0, 10) + 'T00:00:00.000Z').getTime()
+    }))
+    .filter((candle) => Number.isFinite(candle.close) && Number.isFinite(candle.time));
+
+  if (!candles.length) {
+    throw new Error('MOEX ISS не вернул историческую цену за выбранную дату. Укажите цену вручную.');
+  }
+
+  const targetTime = target.getTime();
+  const previousOrSame = candles
+    .filter((candle) => candle.time <= targetTime)
+    .sort((a, b) => b.time - a.time)[0];
+  const selected = previousOrSame || candles.sort((a, b) => Math.abs(a.time - targetTime) - Math.abs(b.time - targetTime))[0];
+  const faceValue = Number(instrument.faceValue || 1000);
+  const price = instrument.market === 'bonds'
+    ? (selected.close / 100) * faceValue + Number(instrument.accruedInterest || 0)
+    : selected.close;
+
+  return {
+    price: roundMoney(price),
+    source: 'moex-history:' + String(selected.begin).slice(0, 10)
   };
 }
 
@@ -763,6 +825,7 @@ module.exports = {
   server,
   fetchBlueChipTickers,
   fetchMoexInstrument,
+  fetchMoexApproxPriceForDate,
   fetchMoexHistory,
   hydrateMarketData,
   tableRows

@@ -227,6 +227,7 @@ function validateTransaction(input) {
       assetClass: normalizeAssetClass(input.assetClass || fallback?.assetClass),
       quantity,
       price,
+      priceSource: String(input.priceSource || 'manual').trim(),
       currency: RUB,
       date: input.date || new Date().toISOString().slice(0, 10),
       notes: String(input.notes || '').trim(),
