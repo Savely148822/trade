@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 
-const { fetchMoexApproxPriceForDate, server } = require('../server');
+const { fetchMoexApproxPriceForDate, formatVkDailyMessage, server } = require('../server');
 
 const storePath = path.join(__dirname, '..', 'data', 'service.sqlite');
 
@@ -105,3 +105,22 @@ function correctBalance(base, cookie, amount) {
     body: JSON.stringify({ amount, notes: 'Сверка с брокером' })
   });
 }
+
+test('formats VK daily analysis message for notifications', () => {
+  const message = formatVkDailyMessage(
+    { name: 'Demo' },
+    {
+      headline: 'За день портфель вырос на 100 ₽.',
+      portfolio: { explanation: 'Основной вклад дал SBER.' },
+      actions: {
+        buy: { title: 'Докупить SBER' },
+        sells: [{ title: 'Рассмотреть сокращение OZON' }],
+        taxes: [{ title: 'Пора подать на вычет' }]
+      }
+    }
+  );
+
+  assert.match(message, /Ежедневный анализ/);
+  assert.match(message, /Докупить SBER/);
+  assert.match(message, /ИИС-3/);
+});

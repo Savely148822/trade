@@ -76,6 +76,14 @@
               Ставка НДФЛ для оценки вычета, %
               <input name="incomeTaxPercent" type="number" min="0" max="30" step="0.1" value="13" />
             </label>
+            <label>
+              VK user id для уведомлений
+              <input name="vkUserId" placeholder="123456789" />
+            </label>
+            <label class="checkbox-label">
+              <input name="dailyNotifications" type="checkbox" />
+              Ежедневные VK-уведомления
+            </label>
             <button class="button" type="submit">Сохранить настройки</button>
             <p id="settings-message" class="message" role="status"></p>
           </form>
@@ -292,6 +300,11 @@
         </section>
       </section>
     </main>
+
+    <footer class="footer-links">
+      <a href="/disclaimer.html">Дисклеймер</a>
+      <a href="/privacy.html">Политика приватности</a>
+    </footer>
 
     <script src="/app.js"></script>
   </body>

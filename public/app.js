@@ -75,7 +75,9 @@ settingsForm.addEventListener('submit', async (event) => {
         accountType: 'iis3',
         iisOpenDate: settingsForm.elements.iisOpenDate.value,
         claimedDeductionYears: settingsForm.elements.claimedDeductionYears.value,
-        incomeTaxRate: incomeTaxPercent / 100
+        incomeTaxRate: incomeTaxPercent / 100,
+        vkUserId: settingsForm.elements.vkUserId.value,
+        dailyNotifications: settingsForm.elements.dailyNotifications.checked
       })
     });
     const result = await response.json();
@@ -237,7 +239,9 @@ async function syncTradeCommissionToSettings() {
       accountType: 'iis3',
       iisOpenDate: settingsForm.elements.iisOpenDate.value,
       claimedDeductionYears: settingsForm.elements.claimedDeductionYears.value,
-      incomeTaxRate: Number(settingsForm.elements.incomeTaxPercent.value) / 100
+      incomeTaxRate: Number(settingsForm.elements.incomeTaxPercent.value) / 100,
+      vkUserId: settingsForm.elements.vkUserId.value,
+      dailyNotifications: settingsForm.elements.dailyNotifications.checked
     })
   });
   const result = await response.json();
@@ -344,6 +348,8 @@ function renderSettings(settings) {
   settingsForm.elements.iisOpenDate.value = settings.iisOpenDate || '';
   settingsForm.elements.claimedDeductionYears.value = (settings.claimedDeductionYears || []).join(', ');
   settingsForm.elements.incomeTaxPercent.value = formatPlainNumber((settings.incomeTaxRate || 0.13) * 100, 2);
+  settingsForm.elements.vkUserId.value = settings.vkUserId || '';
+  settingsForm.elements.dailyNotifications.checked = settings.dailyNotifications === true;
 }
 
 function renderTotals(portfolio) {

@@ -502,3 +502,25 @@ body:not(.guest) #register-form {
   margin-bottom: 0;
   font-size: 1rem;
 }
+
+.checkbox-label {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.footer-links {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  padding: 0 1.5rem 2rem;
+}
+
+.footer-links a {
+  color: var(--muted);
+}

@@ -5,6 +5,7 @@ const http = require('node:http');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 const { URL } = require('node:url');
 
 const {
@@ -28,12 +29,24 @@ const {
 
 const PORT = Number(process.env.PORT || 3000);
 const STORE_FILE = path.join(__dirname, 'data', 'service.sqlite');
+const DATABASE_URL = process.env.DATABASE_URL || '';
 const APP_SECRET = process.env.APP_SECRET || 'dev-secret-change-me';
 const SESSION_COOKIE = 'portfolio_session';
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
+const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || 20);
+const VK_GROUP_TOKEN = process.env.VK_GROUP_TOKEN || '';
+const NOTIFICATION_HOUR_UTC = Number(process.env.NOTIFICATION_HOUR_UTC || 7);
+const authRateLimit = new Map();
+let postgresPool = null;
+let lastNotificationDate = '';
+
+if (process.env.NODE_ENV === 'production' && (!process.env.APP_SECRET || APP_SECRET.length < 32 || APP_SECRET === 'dev-secret-change-me')) {
+  throw new Error('APP_SECRET must be set to a long random value in production.');
+}
 
 const DEFAULT_PORTFOLIO = {
   cashMovements: [],
@@ -47,7 +60,9 @@ const DEFAULT_PORTFOLIO = {
     claimedDeductionYears: [],
     incomeTaxRate: 0.13,
     iisMinYears: 5,
-    iisProfitExemptionYears: 10
+    iisProfitExemptionYears: 10,
+    vkUserId: '',
+    dailyNotifications: false
   }
 };
 
@@ -63,26 +78,20 @@ function createDefaultPortfolio() {
 }
 
 async function loadStore() {
+  if (DATABASE_URL) return loadPostgresStore();
+
   const database = await openDatabase();
   try {
     const rows = database.prepare('SELECT id, email, name, password_hash, password_salt, created_at, portfolio_json FROM users ORDER BY created_at').all();
-    return {
-      users: rows.map((row) => normalizeStoredUser({
-        id: row.id,
-        email: row.email,
-        name: row.name,
-        passwordHash: row.password_hash,
-        passwordSalt: row.password_salt,
-        createdAt: row.created_at,
-        portfolio: safeJsonParse(row.portfolio_json, {})
-      }))
-    };
+    return { users: rows.map(rowToUser) };
   } finally {
     database.close();
   }
 }
 
 async function saveStore(store) {
+  if (DATABASE_URL) return savePostgresStore(store);
+
   const database = await openDatabase();
   try {
     const upsert = database.prepare(
@@ -91,21 +100,66 @@ async function saveStore(store) {
     );
     const write = database.transaction((users) => {
       for (const user of users) {
-        upsert.run({
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          passwordHash: user.passwordHash,
-          passwordSalt: user.passwordSalt,
-          createdAt: user.createdAt,
-          portfolioJson: JSON.stringify(normalizePortfolio(user.portfolio))
-        });
+        upsert.run(userToDbParams(user));
       }
     });
     write(store.users || []);
   } finally {
     database.close();
   }
+}
+
+async function loadPostgresStore() {
+  const pool = await getPostgresPool();
+  const result = await pool.query('SELECT id, email, name, password_hash, password_salt, created_at, portfolio_json FROM users ORDER BY created_at');
+  return { users: result.rows.map(rowToUser) };
+}
+
+async function savePostgresStore(store) {
+  const pool = await getPostgresPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const user of store.users || []) {
+      const params = userToDbParams(user);
+      await client.query(
+        'INSERT INTO users (id, email, name, password_hash, password_salt, created_at, portfolio_json) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb) ' +
+        'ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name, password_hash = excluded.password_hash, password_salt = excluded.password_salt, portfolio_json = excluded.portfolio_json',
+        [params.id, params.email, params.name, params.passwordHash, params.passwordSalt, params.createdAt, params.portfolioJson]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getPostgresPool() {
+  if (!postgresPool) {
+    postgresPool = new Pool({
+      connectionString: DATABASE_URL,
+      ssl: process.env.PGSSLMODE === 'disable' ? false : process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    });
+    await ensurePostgresSchema(postgresPool);
+  }
+  return postgresPool;
+}
+
+async function ensurePostgresSchema(pool) {
+  await pool.query(
+    'CREATE TABLE IF NOT EXISTS users (' +
+      'id TEXT PRIMARY KEY, ' +
+      'email TEXT NOT NULL UNIQUE, ' +
+      'name TEXT NOT NULL, ' +
+      'password_hash TEXT NOT NULL, ' +
+      'password_salt TEXT NOT NULL, ' +
+      'created_at TEXT NOT NULL, ' +
+      'portfolio_json JSONB NOT NULL' +
+    ')'
+  );
 }
 
 async function openDatabase() {
@@ -127,12 +181,32 @@ async function openDatabase() {
   return database;
 }
 
+function rowToUser(row) {
+  return normalizeStoredUser({
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    passwordHash: row.password_hash,
+    passwordSalt: row.password_salt,
+    createdAt: row.created_at,
+    portfolio: typeof row.portfolio_json === 'string' ? safeJsonParse(row.portfolio_json, {}) : row.portfolio_json || {}
+  });
+}
+
+function userToDbParams(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    passwordHash: user.passwordHash,
+    passwordSalt: user.passwordSalt,
+    createdAt: user.createdAt,
+    portfolioJson: JSON.stringify(normalizePortfolio(user.portfolio))
+  };
+}
+
 function safeJsonParse(value, fallback) {
-  try {
-    return value ? JSON.parse(value) : fallback;
-  } catch {
-    return fallback;
-  }
+  try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
 }
 
 function normalizeStoredUser(user) {
@@ -264,9 +338,46 @@ async function requireAuth(request, response) {
   return context;
 }
 
+function getClientIp(request) {
+  return String(request.headers['x-forwarded-for'] || request.socket.remoteAddress || 'unknown').split(',')[0].trim();
+}
+
+function checkAuthRateLimit(request, response) {
+  const key = getClientIp(request) + ':' + request.url;
+  const now = Date.now();
+  const entry = authRateLimit.get(key) || { count: 0, resetAt: now + AUTH_RATE_LIMIT_WINDOW_MS };
+
+  if (now > entry.resetAt) {
+    entry.count = 0;
+    entry.resetAt = now + AUTH_RATE_LIMIT_WINDOW_MS;
+  }
+
+  entry.count += 1;
+  authRateLimit.set(key, entry);
+
+  if (entry.count > AUTH_RATE_LIMIT_MAX) {
+    sendJson(response, { error: 'Too many auth attempts. Try later.' }, 429);
+    return false;
+  }
+
+  return true;
+}
+
 async function routeApi(request, response, url) {
   if (url.pathname.startsWith('/api/auth/')) {
     return routeAuth(request, response, url);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/notifications/test') {
+    const context = await requireAuth(request, response);
+    if (!context) return;
+    await hydrateMarketData(context.user.portfolio, true);
+    await saveStore(context.store);
+    const portfolio = buildPortfolio(context.user.portfolio.transactions, context.user.portfolio.quotes, context.user.portfolio.settings, context.user.portfolio.cashMovements);
+    const vkUserId = context.user.portfolio.settings.vkUserId;
+    if (!vkUserId) return sendJson(response, { errors: ['Укажите VK user id в настройках.'] }, 400);
+    const result = await sendVkMessage(vkUserId, formatVkDailyMessage(context.user, portfolio.dailyAnalysis));
+    return sendJson(response, { ok: true, result });
   }
 
   if (request.method === 'GET' && url.pathname === '/api/watchlist') {
@@ -443,6 +554,7 @@ async function routeAuth(request, response, url) {
   }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/register') {
+    if (!checkAuthRateLimit(request, response)) return;
     const body = await readJsonBody(request);
     const validation = validateAuthInput(body, 'register');
 
@@ -474,6 +586,7 @@ async function routeAuth(request, response, url) {
   }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/login') {
+    if (!checkAuthRateLimit(request, response)) return;
     const body = await readJsonBody(request);
     const validation = validateAuthInput(body, 'login');
 
@@ -774,6 +887,83 @@ function average(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function formatVkDailyMessage(user, analysis) {
+  const lines = [
+    'Ежедневный анализ портфеля',
+    user.name ? 'Пользователь: ' + user.name : '',
+    '',
+    analysis.headline || '',
+    analysis.portfolio?.explanation || '',
+    ''
+  ];
+
+  if (analysis.actions?.buy) {
+    lines.push('Докупить: ' + analysis.actions.buy.title);
+  }
+
+  for (const sell of analysis.actions?.sells || []) {
+    lines.push('Сократить: ' + sell.title);
+  }
+
+  for (const tax of analysis.actions?.taxes || []) {
+    lines.push('ИИС-3: ' + tax.title);
+  }
+
+  return lines.filter(Boolean).join('\n').slice(0, 3500);
+}
+
+async function sendVkMessage(userId, message) {
+  if (!VK_GROUP_TOKEN || !userId) return { skipped: true };
+  const params = new URLSearchParams({
+    access_token: VK_GROUP_TOKEN,
+    v: '5.199',
+    user_id: String(userId),
+    random_id: String(Date.now()),
+    message
+  });
+  const response = await fetch('https://api.vk.com/method/messages.send', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: params
+  });
+  const payload = await response.json();
+  if (payload.error) throw new Error('VK error: ' + payload.error.error_msg);
+  return payload;
+}
+
+async function runDailyNotifications(force = false) {
+  if (!VK_GROUP_TOKEN) return { sent: 0, skipped: 'VK_GROUP_TOKEN is not configured' };
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+
+  if (!force && (now.getUTCHours() !== NOTIFICATION_HOUR_UTC || lastNotificationDate === today)) {
+    return { sent: 0, skipped: 'not scheduled time' };
+  }
+
+  const store = await loadStore();
+  let sent = 0;
+
+  for (const user of store.users) {
+    const vkUserId = user.portfolio?.settings?.vkUserId;
+    if (!user.portfolio?.settings?.dailyNotifications || !vkUserId) continue;
+    await hydrateMarketData(user.portfolio, false);
+    const portfolio = buildPortfolio(user.portfolio.transactions, user.portfolio.quotes, user.portfolio.settings, user.portfolio.cashMovements);
+    await sendVkMessage(vkUserId, formatVkDailyMessage(user, portfolio.dailyAnalysis));
+    sent += 1;
+  }
+
+  await saveStore(store);
+  lastNotificationDate = today;
+  return { sent };
+}
+
+function startDailyNotifier() {
+  if (!VK_GROUP_TOKEN) return;
+  setInterval(() => {
+    runDailyNotifications(false).catch((error) => console.error('Daily notification failed:', error));
+  }, 15 * 60 * 1000).unref();
+}
+
 async function routeStatic(request, response, url) {
   const requestedPath = url.pathname === '/' ? '/index.html' : url.pathname;
   const safePath = path.normalize(decodeURIComponent(requestedPath)).replace(/^(\.\.[/\\])+/, '');
@@ -818,6 +1008,17 @@ function readJsonBody(request) {
   });
 }
 
+function applySecurityHeaders(response) {
+  response.setHeader('x-content-type-options', 'nosniff');
+  response.setHeader('x-frame-options', 'DENY');
+  response.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
+  response.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
+  response.setHeader('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'");
+  if (process.env.NODE_ENV === 'production') {
+    response.setHeader('strict-transport-security', 'max-age=15552000; includeSubDomains');
+  }
+}
+
 function sendJson(response, body, statusCode = 200, headers = {}) {
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -828,6 +1029,7 @@ function sendJson(response, body, statusCode = 200, headers = {}) {
 }
 
 const server = http.createServer(async (request, response) => {
+  applySecurityHeaders(response);
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
@@ -846,6 +1048,7 @@ const server = http.createServer(async (request, response) => {
 if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`MOEX portfolio assistant is running at http://localhost:${PORT}`);
+    startDailyNotifier();
   });
 }
 
@@ -856,5 +1059,8 @@ module.exports = {
   fetchMoexApproxPriceForDate,
   fetchMoexHistory,
   hydrateMarketData,
-  tableRows
+  tableRows,
+  formatVkDailyMessage,
+  runDailyNotifications,
+  sendVkMessage
 };

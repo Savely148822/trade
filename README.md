@@ -146,7 +146,42 @@ data/service.sqlite
 APP_SECRET=very-long-random-secret npm start
 ```
 
-Для настоящего публичного запуска следующим шагом лучше перейти с локального SQLite на PostgreSQL, добавить восстановление пароля, rate limiting, резервные копии и HTTPS через nginx.
+Для публичного запуска используйте PostgreSQL через `DATABASE_URL`, HTTPS через nginx, резервные копии базы и отдельный длинный `APP_SECRET`.
+
+## Публичный запуск
+
+Минимальные переменные окружения для VPS:
+
+```bash
+NODE_ENV=production
+APP_SECRET=very-long-random-secret-at-least-32-chars
+DATABASE_URL=postgres://user:password@host:5432/dbname
+VK_GROUP_TOKEN=vk-community-token
+NOTIFICATION_HOUR_UTC=7
+AUTH_RATE_LIMIT_MAX=20
+```
+
+Если `DATABASE_URL` не задан, сервис использует локальный SQLite `data/service.sqlite`, что удобно для разработки, но для публичного сервиса лучше PostgreSQL.
+
+Что должно быть на VPS:
+
+- Node.js 18+;
+- PostgreSQL или managed Postgres;
+- nginx reverse proxy;
+- HTTPS через certbot;
+- регулярные backups базы;
+- systemd/pm2 для автозапуска;
+- закрытые env-файлы и firewall.
+
+VK-уведомления:
+
+1. Создайте VK-сообщество.
+2. Включите сообщения сообщества.
+3. Получите `VK_GROUP_TOKEN`.
+4. Пользователь указывает свой VK user id в настройках сервиса и включает ежедневные уведомления.
+5. Сервис отправляет ежедневный анализ примерно в `NOTIFICATION_HOUR_UTC`.
+
+В публичном интерфейсе добавлены страницы `/disclaimer.html` и `/privacy.html`. Перед реальным запуском их нужно адаптировать под юридическое лицо/ИП и актуальную политику обработки персональных данных.
 
 ## Запуск
 

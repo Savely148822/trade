@@ -93,7 +93,9 @@ function normalizeSettings(settings = {}) {
     iisProfitExemptionYears:
       iisProfitExemptionYears !== null && iisProfitExemptionYears >= 5 && iisProfitExemptionYears <= 15
         ? iisProfitExemptionYears
-        : DEFAULT_IIS_PROFIT_EXEMPTION_YEARS
+        : DEFAULT_IIS_PROFIT_EXEMPTION_YEARS,
+    vkUserId: String(settings.vkUserId || '').trim(),
+    dailyNotifications: settings.dailyNotifications === true || settings.dailyNotifications === 'true'
   };
 }
 
