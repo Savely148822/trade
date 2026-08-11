@@ -28,6 +28,9 @@ const balanceCorrectionMessage = document.querySelector('#balance-correction-mes
 const tradeMessage = document.querySelector('#trade-message');
 const withdrawalMessage = document.querySelector('#withdrawal-message');
 const refreshButton = document.querySelector('#refresh-market');
+const backupExportButton = document.querySelector('#backup-export-button');
+const backupImportInput = document.querySelector('#backup-import-input');
+const backupMessage = document.querySelector('#backup-message');
 
 document.addEventListener('DOMContentLoaded', async () => {
   const today = new Date().toISOString().slice(0, 10);
@@ -37,6 +40,59 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (state.user) {
     await loadWatchlist();
     await loadPortfolio();
+  }
+});
+
+backupExportButton.addEventListener('click', async () => {
+  setMessage(backupMessage, 'Готовлю бэкап...');
+  try {
+    const response = await fetch('/api/backup/export');
+    const backup = await response.json();
+    if (!response.ok) throw new Error((backup.errors || [backup.error]).join(' '));
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const stamp = new Date().toISOString().slice(0, 10);
+    const emailPart = String(state.user?.email || 'portfolio').replace(/[^a-z0-9._-]+/gi, '_');
+    link.href = url;
+    link.download = `moex-portfolio-${emailPart}-${stamp}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage(backupMessage, 'Бэкап скачан. Перенесите файл на ПК и импортируйте там.', 'ok');
+  } catch (error) {
+    setMessage(backupMessage, error.message, 'error');
+  }
+});
+
+backupImportInput.addEventListener('change', async () => {
+  const file = backupImportInput.files?.[0];
+  backupImportInput.value = '';
+  if (!file) return;
+
+  if (!confirm('Импорт заменит текущий портфель данными из файла. Продолжить?')) return;
+
+  setMessage(backupMessage, 'Импортирую бэкап...');
+  try {
+    const text = await file.text();
+    const backup = JSON.parse(text);
+    const response = await fetch('/api/backup/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ backup })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error((result.errors || [result.error]).join(' '));
+    await loadPortfolio(true);
+    setMessage(
+      backupMessage,
+      `Импорт готов: ${result.transactions} сделок, ${result.cashMovements} движений кэша.`,
+      'ok'
+    );
+  } catch (error) {
+    setMessage(backupMessage, error.message || 'Не удалось импортировать файл.', 'error');
   }
 });
 

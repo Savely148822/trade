@@ -148,6 +148,46 @@ APP_SECRET=very-long-random-secret npm start
 
 Для публичного запуска используйте PostgreSQL через `DATABASE_URL`, HTTPS через nginx, резервные копии базы и отдельный длинный `APP_SECRET`.
 
+## Перенос с облака/VPS на ПК
+
+Чтобы перенести портфель с облачного сервиса на локальный компьютер:
+
+### Через интерфейс
+
+1. На облаке/VPS войдите в свой аккаунт.
+2. В блоке **Перенос на ПК** нажмите **Скачать бэкап**.
+3. На ПК клонируйте репозиторий, выполните `npm install` и `npm start` **без** `DATABASE_URL`.
+4. Зарегистрируйтесь или войдите локально.
+5. Нажмите **Импортировать бэкап** и выберите скачанный JSON.
+
+Файл содержит только портфель (сделки, кэш, настройки). Пароли туда не попадают.
+
+### Через CLI
+
+На VPS (где задан `DATABASE_URL`):
+
+```bash
+DATABASE_URL=postgres://user:password@host:5432/dbname \
+  node scripts/cloud-to-pc.js export --email you@example.com -o backup.json
+```
+
+На ПК (без `DATABASE_URL`):
+
+```bash
+# если локального аккаунта ещё нет
+node scripts/cloud-to-pc.js import -i backup.json \
+  --email you@example.com --name "Вы" --password "ваш-локальный-пароль"
+
+# если аккаунт уже есть — портфель будет заменён, пароль не меняется
+node scripts/cloud-to-pc.js import -i backup.json --email you@example.com
+```
+
+После импорта запустите локально:
+
+```bash
+APP_SECRET=your-local-dev-secret npm start
+```
+
 ## Публичный запуск
 
 Минимальные переменные окружения для VPS:

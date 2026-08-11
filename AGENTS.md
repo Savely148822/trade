@@ -32,6 +32,8 @@ See `README.md` and `package.json` for full detail. Quick reference:
 | Install deps | `npm install` |
 | Tests | `npm test` (Node built-in test runner; 15 tests) |
 | Dev server | `npm start` → http://localhost:3000 (override with `PORT`) |
+| Cloud → PC export | `DATABASE_URL=... node scripts/cloud-to-pc.js export --email you@example.com -o backup.json` |
+| Cloud → PC import | `node scripts/cloud-to-pc.js import -i backup.json --email you@example.com [--name Name --password secret]` |
 | Lint / build | Not configured in this repo |
 
 Set `APP_SECRET` for anything beyond local smoke tests. Production requires a long random secret (`NODE_ENV=production` enforces length ≥ 32).

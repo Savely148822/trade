@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test --test-concurrency=1",
+    "cloud-to-pc:export": "node scripts/cloud-to-pc.js export",
+    "cloud-to-pc:import": "node scripts/cloud-to-pc.js import"
   },
   "keywords": [
     "portfolio",

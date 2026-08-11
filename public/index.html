@@ -187,6 +187,24 @@
           </form>
         </section>
 
+        <section class="panel requires-auth">
+          <h2>Перенос на ПК</h2>
+          <p class="panel-note">
+            Скачайте бэкап с облака/VPS и импортируйте его в локальный аккаунт на компьютере.
+            Пароли не входят в файл — только портфель, сделки и настройки.
+          </p>
+          <div class="backup-actions">
+            <button id="backup-export-button" class="button button--secondary" type="button">
+              Скачать бэкап
+            </button>
+            <label class="button button--secondary backup-import-label">
+              Импортировать бэкап
+              <input id="backup-import-input" type="file" accept="application/json,.json" hidden />
+            </label>
+          </div>
+          <p id="backup-message" class="message" role="status"></p>
+        </section>
+
       </aside>
 
       <section class="dashboard requires-auth">

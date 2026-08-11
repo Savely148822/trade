@@ -26,9 +26,16 @@ const {
   validateSettings,
   validateTransaction
 } = require('./src/portfolio');
+const {
+  backupFileName,
+  createPortfolioBackup,
+  parsePortfolioBackup
+} = require('./src/backup');
 
 const PORT = Number(process.env.PORT || 3000);
-const STORE_FILE = path.join(__dirname, 'data', 'service.sqlite');
+const STORE_FILE = process.env.PORTFOLIO_STORE_FILE
+  ? path.resolve(process.env.PORTFOLIO_STORE_FILE)
+  : path.join(__dirname, 'data', 'service.sqlite');
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const APP_SECRET = process.env.APP_SECRET || 'dev-secret-change-me';
 const SESSION_COOKIE = 'portfolio_session';
@@ -541,6 +548,35 @@ async function routeApi(request, response, url) {
     data.cashMovements = data.cashMovements.filter((movement) => movement.id !== id);
     await saveStore(context.store);
     return sendJson(response, { deleted: before !== data.cashMovements.length });
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/backup/export') {
+    const backup = createPortfolioBackup({
+      email: context.user.email,
+      name: context.user.name,
+      portfolio: data
+    });
+    return sendJson(response, backup, 200, {
+      'content-disposition': `attachment; filename="${backupFileName(context.user.email)}"`
+    });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/backup/import') {
+    const body = await readJsonBody(request);
+    const parsed = parsePortfolioBackup(body.backup || body);
+    if (!parsed.valid) {
+      return sendJson(response, { errors: parsed.errors }, 400);
+    }
+
+    context.user.portfolio = normalizePortfolio(parsed.value.portfolio);
+    await saveStore(context.store);
+    return sendJson(response, {
+      ok: true,
+      importedAt: new Date().toISOString(),
+      sourceExportedAt: parsed.value.exportedAt || null,
+      transactions: context.user.portfolio.transactions.length,
+      cashMovements: context.user.portfolio.cashMovements.length
+    });
   }
 
   return sendJson(response, { error: 'API route not found' }, 404);
@@ -1062,5 +1098,7 @@ module.exports = {
   tableRows,
   formatVkDailyMessage,
   runDailyNotifications,
-  sendVkMessage
+  sendVkMessage,
+  createPortfolioBackup,
+  parsePortfolioBackup
 };

@@ -492,6 +492,26 @@ body:not(.guest) #register-form {
   pointer-events: none;
 }
 
+.panel-note {
+  margin: 0 0 0.85rem;
+  color: var(--muted, #5b6472);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.backup-import-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
 .correction-form {
   border-top: 1px solid var(--line);
   margin-top: 1rem;
